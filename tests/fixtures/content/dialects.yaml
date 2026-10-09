@@ -1,0 +1,6 @@
+engines: []
+features:
+  - id: limit
+    name: Limit rows
+    support:
+      sqlite: {level: yes, note: "`LIMIT n`"}

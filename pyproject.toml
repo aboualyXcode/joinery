@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "joinery"
+version = "0.1.0"
+description = "Interactive SQL learning and reference platform: real engines, visual explanations, production patterns."
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Mahmoud Aboualy" }]
+dependencies = [
+  "Flask>=3.1.3,<4",
+  "PyYAML>=6.0.2,<7",
+  "markdown-it-py>=4.0,<5",
+]
+
+[project.optional-dependencies]
+production = ["gunicorn>=25.3,<26"]
+duckdb = ["duckdb>=1.5.6,<2"]
+postgres = ["psycopg[binary]>=3.3.5,<4"]
+mysql = ["PyMySQL>=1.1.1,<2"]
+mssql = ["mssql-python>=1.15,<2"]
+
+[project.scripts]
+joinery = "joinery.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["joinery*"]
+
+[tool.setuptools.package-data]
+joinery = ["sandbox/worker.py"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+extend-exclude = ["web", "node_modules", "var"]
+
+[tool.ruff.lint]
+# pycodestyle errors/warnings, pyflakes and bugbear. Long lines are allowed
+# because SQL fragments read better unwrapped.
+select = ["E", "F", "W", "B"]
+ignore = ["E501"]

@@ -1,0 +1,21 @@
+{
+  "name": "joinery-web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Browser client for Joinery, an interactive SQL learning platform.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "build": "node scripts/build-web.mjs",
+    "watch": "node scripts/build-web.mjs --watch",
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test \"web/test/**/*.test.ts\"",
+    "check": "npm run typecheck && npm test && npm run build"
+  },
+  "devDependencies": {
+    "esbuild": "0.27.7",
+    "typescript": "6.0.3"
+  }
+}

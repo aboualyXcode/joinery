@@ -1,0 +1,6 @@
+# Optional drivers for the additional engines. SQLite needs nothing extra.
+# These engines are experimental: see docs/engines.md for their status.
+duckdb==1.5.6
+psycopg[binary]==3.3.5
+PyMySQL==1.1.1
+mssql-python==1.15.0

@@ -1,0 +1,34 @@
+id: sample-lesson
+title: Sample lesson
+module: basics
+level: beginner
+minutes: 5
+dataset: joinlab
+summary: A tiny lesson for tests.
+objectives: ["Run a **query**"]
+sections:
+  - title: Selecting
+    body: |
+      Select some `rows`.
+    examples:
+      - id: sample-teams
+        sql: SELECT name FROM teams ORDER BY id
+        portable: true
+        expect: {rows: 4}
+      - id: sample-error
+        sql: INSERT INTO teams (name, city) VALUES ('Comets', 'Leeds')
+        expect: {error: UNIQUE constraint failed}
+    widget: {type: join-visualizer}
+exercises:
+  - id: sample-free-agents
+    title: Free agents
+    prompt: List the names of players without a team.
+    starter: SELECT name FROM players
+    solution: SELECT name FROM players WHERE team_id IS NULL
+    hints: ["Use `IS NULL`"]
+  - id: sample-rename
+    title: Rename a team
+    prompt: Rename the Owls to the Kites.
+    starter: "-- write an UPDATE"
+    solution: UPDATE teams SET name = 'Kites' WHERE name = 'Owls'
+    check: {mode: state, verify: "SELECT id, name FROM teams ORDER BY id"}
