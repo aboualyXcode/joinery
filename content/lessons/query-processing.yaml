@@ -1,0 +1,124 @@
+id: query-processing
+title: How a database runs a query
+module: performance
+level: intermediate
+minutes: 20
+dataset: shop
+summary: Follow a query from text to result through the parser, binder, optimizer, executor and storage engine, and see why SQL's logical order matters.
+objectives:
+  - Name the stages a query passes through
+  - Explain the logical order of evaluation and its consequences
+  - Distinguish logical plans from physical plans
+  - Explain what statistics give the optimizer
+sections:
+  - title: From text to result
+    body: |
+      Every engine follows roughly the same pipeline:
+
+      1. The **parser** turns the text into a syntax tree, or reports a syntax error.
+      2. The **binder** resolves names against the catalog (does `orders.status` exist?) and checks types.
+      3. The **optimizer** rewrites the query and chooses a physical plan: which index, which join
+         algorithm, which join order, guided by statistics and a cost model.
+      4. The **executor** runs the plan, pulling rows through a tree of operators.
+      5. The **storage engine** reads B-tree pages from cache or disk, and a journal or write-ahead log
+         makes changes durable.
+
+      Type a query into the explorer below to see what each stage produces for it, using SQLite's real
+      plan and bytecode.
+    widget: {type: query-journey}
+  - title: The logical order of evaluation
+    body: |
+      SQL is written `SELECT ... FROM ... WHERE ... GROUP BY ... HAVING ... ORDER BY ... LIMIT`, but its
+      meaning is defined in a different order: FROM and JOIN, WHERE, GROUP BY, HAVING, SELECT, DISTINCT,
+      ORDER BY, LIMIT. That order explains many rules:
+
+      - `WHERE` cannot use aggregates, because grouping has not happened yet.
+      - Standard SQL does not let `WHERE` use select-list aliases, because `SELECT` runs later.
+        SQLite and MySQL relax this; PostgreSQL and SQL Server do not.
+      - `ORDER BY` *can* use aliases, because it runs after `SELECT`.
+
+      Real engines are free to execute in any order that gives the same answer, for example by pushing a
+      filter below a join.
+    examples:
+      - id: proc-logical-order
+        title: Watch the stages
+        sql: |
+          SELECT category_id, count(*) AS products, round(avg(unit_price), 2) AS avg_price
+          FROM products
+          WHERE is_active
+          GROUP BY category_id
+          HAVING count(*) >= 3
+          ORDER BY avg_price DESC
+          LIMIT 5;
+        portable: true
+        mode: steps
+      - id: proc-alias-where
+        title: Aliases in WHERE, the portable way
+        sql: |
+          SELECT name, unit_price * 1.2 AS gross
+          FROM products
+          WHERE unit_price * 1.2 > 30
+          ORDER BY gross DESC;
+        portable: true
+  - title: Logical and physical plans
+    body: |
+      A **logical plan** describes *what* to compute in relational terms: scan, filter, join, aggregate.
+      A **physical plan** describes *how*: a full scan or an index search, a nested-loop or hash join, a
+      sort or an ordered index. SQLite shows its physical plan with `EXPLAIN QUERY PLAN`, and the bytecode
+      program its virtual machine runs with `EXPLAIN`. Open the Plan tab on this example.
+    examples:
+      - id: proc-physical-plan
+        title: A join, a sort and an index
+        sql: |
+          SELECT c.country, count(*) AS orders
+          FROM orders AS o
+          JOIN customers AS c ON c.id = o.customer_id
+          WHERE o.ordered_at >= '2026-06-01'
+          GROUP BY c.country
+          ORDER BY orders DESC;
+        mode: plan
+  - title: Statistics guide the optimizer
+    body: |
+      To estimate how many rows a step produces, the optimizer uses **statistics**: row counts, distinct
+      values and histograms. `ANALYZE` collects them; SQLite stores them in `sqlite_stat1`. Stale
+      statistics are a common cause of a plan that suddenly turns slow.
+    examples:
+      - id: proc-stats
+        title: What ANALYZE recorded
+        sql: |
+          SELECT tbl, idx, stat FROM sqlite_stat1 ORDER BY tbl, idx;
+exercises:
+  - id: processing-where-or-having
+    title: Rows or groups?
+    prompt: Return each `category_id` and its average price of **active** products (`avg_price`, rounded to 2), keeping only categories whose average active price is above 20.
+    starter: |
+      SELECT category_id, round(avg(unit_price), 2) AS avg_price
+      FROM products
+      WHERE is_active AND unit_price > 20
+      GROUP BY category_id
+    solution: |
+      SELECT category_id, round(avg(unit_price), 2) AS avg_price
+      FROM products
+      WHERE is_active
+      GROUP BY category_id
+      HAVING avg(unit_price) > 20
+    hints:
+      - "The starter filters individual products by price before averaging."
+      - "A condition on the average belongs in `HAVING`."
+  - id: processing-gross-prices
+    title: The portable alias
+    prompt: Return `name` and `gross` (`unit_price * 1.2`) for products whose gross price is above 30, without referring to the alias in `WHERE`.
+    starter: SELECT name, unit_price * 1.2 AS gross FROM products WHERE unit_price > 30
+    solution: SELECT name, unit_price * 1.2 AS gross FROM products WHERE unit_price * 1.2 > 30
+    hints:
+      - "Repeat the expression in `WHERE`, or wrap the query in a subquery or CTE."
+dialect_notes:
+  postgres: "`EXPLAIN` shows the plan, `EXPLAIN (ANALYZE, BUFFERS)` runs it and reports actual rows, time and pages. Autovacuum keeps statistics current."
+  mysql: "`EXPLAIN FORMAT=TREE` and `EXPLAIN ANALYZE` (8.0.18+). `ANALYZE TABLE` refreshes statistics and histograms."
+  mssql: "Estimated and actual execution plans, Query Store for history, and automatic statistics updates."
+  duckdb: "`EXPLAIN` and `EXPLAIN ANALYZE` print the physical operator tree with timings."
+references:
+  - title: Architecture of SQLite
+    url: https://www.sqlite.org/arch.html
+  - title: PostgreSQL - the path of a query
+    url: https://www.postgresql.org/docs/current/query-path.html

@@ -1,0 +1,147 @@
+id: transactions
+title: Transactions and isolation
+module: changing
+level: advanced
+minutes: 30
+dataset: bank
+summary: Group changes into atomic units with BEGIN, COMMIT, ROLLBACK and savepoints, and understand isolation levels and the anomalies they prevent.
+objectives:
+  - Explain atomicity, consistency, isolation and durability
+  - Use `BEGIN`, `COMMIT`, `ROLLBACK` and `SAVEPOINT`
+  - Name the read anomalies and which isolation levels prevent them
+  - Keep transactions short and handle serialization failures
+sections:
+  - title: All or nothing
+    body: |
+      A **transaction** groups statements so they succeed or fail together. A transfer between two
+      accounts is the classic example: debiting one account without crediting the other would lose
+      money. Transactions give four guarantees, **ACID**: atomicity (all or nothing), consistency
+      (constraints hold), isolation (concurrent transactions do not see each other's partial work) and
+      durability (committed data survives a crash).
+    examples:
+      - id: tx-transfer
+        title: An atomic transfer
+        sql: |
+          BEGIN;
+          INSERT INTO transactions (account_id, posted_at, amount, kind, counterparty_account_id, description)
+          VALUES (1, '2026-07-01 09:00:00', -100, 'transfer_out', 4, 'Transfer to savings');
+          INSERT INTO transactions (account_id, posted_at, amount, kind, counterparty_account_id, description)
+          VALUES (4, '2026-07-01 09:00:00', 100, 'transfer_in', 1, 'Transfer from checking');
+          COMMIT;
+          SELECT account_id, amount, kind FROM transactions WHERE posted_at = '2026-07-01 09:00:00';
+  - title: Rolling back and savepoints
+    body: |
+      `ROLLBACK` undoes everything since `BEGIN`. A `SAVEPOINT` marks a point inside a transaction that
+      you can return to with `ROLLBACK TO`, undoing only the work after it.
+    examples:
+      - id: tx-rollback
+        title: Undoing a mistake
+        sql: |
+          BEGIN;
+          DELETE FROM transactions WHERE kind = 'fee';
+          SELECT count(*) AS fees_inside_transaction FROM transactions WHERE kind = 'fee';
+          ROLLBACK;
+          SELECT count(*) AS fees_after_rollback FROM transactions WHERE kind = 'fee';
+      - id: tx-savepoint
+        title: Partial rollback with a savepoint
+        sql: |
+          BEGIN;
+          INSERT INTO transactions (account_id, posted_at, amount, kind, description)
+          VALUES (5, '2026-07-01 10:00:00', -35, 'fee', 'Card replacement fee');
+          SAVEPOINT before_bonus;
+          INSERT INTO transactions (account_id, posted_at, amount, kind, description)
+          VALUES (5, '2026-07-01 10:00:00', 100, 'deposit', 'Welcome bonus');
+          ROLLBACK TO before_bonus;
+          COMMIT;
+          SELECT amount, kind, description FROM transactions WHERE posted_at = '2026-07-01 10:00:00';
+  - title: Isolation levels and anomalies
+    body: |
+      When transactions overlap, weaker isolation lets one see the effects of another:
+
+      - **Dirty read**: reading data another transaction has not committed.
+      - **Non-repeatable read**: reading the same row twice and getting different values.
+      - **Phantom read**: running the same query twice and getting different rows.
+      - **Lost update**: two read-modify-write cycles overwrite each other.
+      - **Write skew**: two transactions each check a rule, then together break it.
+
+      The SQL standard defines four levels: READ UNCOMMITTED, READ COMMITTED, REPEATABLE READ and
+      SERIALIZABLE. Engines implement them differently: PostgreSQL never allows dirty reads and its
+      REPEATABLE READ also prevents phantoms; MySQL's InnoDB defaults to REPEATABLE READ; SQL Server and
+      PostgreSQL default to READ COMMITTED; SQLite transactions are serializable. Step through each
+      scenario in the simulator to see the timeline under each level.
+    widget: {type: isolation-simulator}
+  - title: Locks, deadlocks and retries
+    body: |
+      Writers take locks. When two transactions wait for each other's locks, the database detects the
+      **deadlock** and aborts one of them. Under SERIALIZABLE (and PostgreSQL's REPEATABLE READ) the
+      database may also abort a transaction with a serialization failure instead of allowing an anomaly.
+
+      Practical rules: keep transactions short, never wait for user input inside one, touch rows in a
+      consistent order, and make the application **retry** transactions that fail with a deadlock or
+      serialization error.
+exercises:
+  - id: transactions-transfer
+    title: Transfer 250 atomically
+    prompt: |
+      Move 250 from account 1 to account 4 inside a transaction. Insert two rows into `transactions`,
+      both posted at `2026-07-01 09:00:00` with description `Transfer`: account 1 gets `-250` with kind
+      `transfer_out` and counterparty 4; account 4 gets `250` with kind `transfer_in` and counterparty 1.
+    starter: |
+      BEGIN;
+      INSERT INTO transactions (account_id, posted_at, amount, kind, counterparty_account_id, description)
+      VALUES (1, '2026-07-01 09:00:00', -250, 'transfer_out', 4, 'Transfer');
+      COMMIT;
+    solution: |
+      BEGIN;
+      INSERT INTO transactions (account_id, posted_at, amount, kind, counterparty_account_id, description)
+      VALUES (1, '2026-07-01 09:00:00', -250, 'transfer_out', 4, 'Transfer');
+      INSERT INTO transactions (account_id, posted_at, amount, kind, counterparty_account_id, description)
+      VALUES (4, '2026-07-01 09:00:00', 250, 'transfer_in', 1, 'Transfer');
+      COMMIT;
+    check:
+      mode: state
+      verify: |
+        SELECT account_id, amount, kind, counterparty_account_id, description
+        FROM transactions WHERE posted_at = '2026-07-01 09:00:00'
+    hints:
+      - "The starter only debits account 1: money disappears."
+  - id: transactions-savepoint
+    title: Keep the fee, drop the bonus
+    prompt: |
+      In one transaction, insert a `-35` `fee` on account 5 described `Card replacement fee`, then
+      create a savepoint, insert a `100` `deposit` on account 5 described `Welcome bonus`, roll back to
+      the savepoint and commit. Post both at `2026-07-01 10:00:00`. Only the fee should remain.
+    starter: |
+      BEGIN;
+      INSERT INTO transactions (account_id, posted_at, amount, kind, description)
+      VALUES (5, '2026-07-01 10:00:00', -35, 'fee', 'Card replacement fee');
+      INSERT INTO transactions (account_id, posted_at, amount, kind, description)
+      VALUES (5, '2026-07-01 10:00:00', 100, 'deposit', 'Welcome bonus');
+      COMMIT;
+    solution: |
+      BEGIN;
+      INSERT INTO transactions (account_id, posted_at, amount, kind, description)
+      VALUES (5, '2026-07-01 10:00:00', -35, 'fee', 'Card replacement fee');
+      SAVEPOINT before_bonus;
+      INSERT INTO transactions (account_id, posted_at, amount, kind, description)
+      VALUES (5, '2026-07-01 10:00:00', 100, 'deposit', 'Welcome bonus');
+      ROLLBACK TO before_bonus;
+      COMMIT;
+    check:
+      mode: state
+      verify: "SELECT account_id, amount, kind, description FROM transactions WHERE posted_at = '2026-07-01 10:00:00'"
+    hints:
+      - "`SAVEPOINT name` marks a point; `ROLLBACK TO name` returns to it."
+dialect_notes:
+  postgres: "Default READ COMMITTED. REPEATABLE READ is snapshot isolation; SERIALIZABLE uses serializable snapshot isolation (SSI) and can fail with SQLSTATE 40001, which clients should retry."
+  mysql: "InnoDB defaults to REPEATABLE READ with consistent snapshot reads; locking reads (`FOR UPDATE`) use next-key locks to prevent phantoms. DDL commits implicitly."
+  mssql: "Defaults to locking READ COMMITTED. `READ_COMMITTED_SNAPSHOT` (on by default in Azure SQL Database) and `SNAPSHOT` isolation use row versioning."
+  duckdb: "Uses optimistic MVCC with snapshot isolation; conflicting writes abort with a transaction conflict error."
+  sqlite: "Transactions are serializable: one writer at a time. In WAL mode readers see a snapshot and never block the writer."
+references:
+  - title: PostgreSQL transaction isolation
+    url: https://www.postgresql.org/docs/current/transaction-iso.html
+  - title: SQLite transactions
+    url: https://www.sqlite.org/lang_transaction.html
+  - title: A Critique of ANSI SQL Isolation Levels (Berenson et al.)
+    url: https://www.microsoft.com/en-us/research/publication/a-critique-of-ansi-sql-isolation-levels/

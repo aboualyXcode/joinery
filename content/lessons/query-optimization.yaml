@@ -1,0 +1,128 @@
+id: query-optimization
+title: Optimizing queries
+module: performance
+level: advanced
+minutes: 35
+dataset: shop
+summary: Measure, then fix slow queries with sargable predicates, the right indexes, set-based rewrites and early filtering, and know the classic anti-patterns.
+objectives:
+  - Measure with plans and work counts before changing anything
+  - Write sargable predicates that can use indexes
+  - Replace row-by-row work with set-based queries
+  - Recognize OFFSET pagination, SELECT *, OR chains and N+1 queries
+sections:
+  - title: Measure first
+    body: |
+      Optimizing without measuring is guessing. Look at the plan, then at the work done: Joinery reports
+      elapsed time and SQLite virtual machine steps for every explained query. Work counts are steadier
+      than timings on tiny datasets, and they grow with the data in the same way.
+  - title: Sargable predicates
+    body: |
+      A predicate is **sargable** (Search ARGument ABLE) when an index can serve it. Wrapping the
+      indexed column in a function, like `date(ordered_at) = '2026-06-15'`, forces the database to compute
+      the function for every row. Rewrite it as a range on the bare column. Compare the plans and the
+      work of these two equivalent queries.
+    examples:
+      - id: opt-not-sargable
+        title: A function on the column
+        sql: |
+          SELECT id, ordered_at FROM orders WHERE date(ordered_at) = '2026-06-15';
+        mode: plan
+      - id: opt-sargable
+        title: A range on the bare column
+        sql: |
+          SELECT id, ordered_at FROM orders
+          WHERE ordered_at >= '2026-06-15' AND ordered_at < '2026-06-16';
+        mode: plan
+  - title: Set-based instead of row-by-row
+    body: |
+      A correlated subquery in the select list conceptually runs once per row. Many optimizers rewrite it,
+      but a join with an aggregate states the intent directly and usually does less work. The same idea
+      applies in application code: one query that returns 100 rows beats 100 queries that return one row
+      each, the **N+1 problem** that ORMs make easy to fall into.
+    examples:
+      - id: opt-correlated
+        title: Row by row
+        sql: |
+          SELECT c.id,
+                 (SELECT count(*) FROM orders AS o WHERE o.customer_id = c.id) AS orders
+          FROM customers AS c;
+        mode: plan
+      - id: opt-set-based
+        title: Aggregate once, then join
+        sql: |
+          SELECT c.id, coalesce(o.orders, 0) AS orders
+          FROM customers AS c
+          LEFT JOIN (SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id) AS o
+            ON o.customer_id = c.id;
+        mode: plan
+  - title: Classic anti-patterns
+    body: |
+      - **Deep OFFSET pagination** reads and discards every skipped row; use keyset pagination.
+      - **SELECT \*** reads columns you do not need and defeats covering indexes.
+      - **OR across different columns** often prevents index use; a `UNION ALL` of two indexed queries may
+        be faster.
+      - **Implicit conversions**, such as comparing a text column to a number, can disable an index.
+      - **Leading wildcards** (`LIKE '%term'`) cannot use a B-tree index; use full-text search instead.
+      - **Filtering late**: aggregate or filter before joining large tables, not after.
+
+      Indexes are the most effective tool, but each one slows writes. Add them for real, frequent
+      queries, and drop the ones that nothing uses.
+    examples:
+      - id: opt-filter-early
+        title: Pre-aggregating before a join
+        sql: |
+          WITH item_totals AS (
+            SELECT order_id, sum(quantity * unit_price - discount) AS total
+            FROM order_items
+            GROUP BY order_id
+          )
+          SELECT o.channel, count(*) AS orders, round(sum(t.total), 2) AS revenue
+          FROM orders AS o
+          JOIN item_totals AS t ON t.order_id = o.id
+          WHERE o.status = 'delivered'
+          GROUP BY o.channel;
+        mode: plan
+exercises:
+  - id: optimization-sargable-day
+    title: Make it sargable
+    prompt: |
+      Return `id` and `ordered_at` for orders placed on 15 June 2026. The starter wraps the column in
+      `date()`, which forces a full scan. Rewrite it so SQLite can use `idx_orders_ordered_at`.
+      Joinery checks both the result and the plan.
+    starter: SELECT id, ordered_at FROM orders WHERE date(ordered_at) = '2026-06-15'
+    solution: SELECT id, ordered_at FROM orders WHERE ordered_at >= '2026-06-15' AND ordered_at < '2026-06-16'
+    check: {plan: {searched: [orders]}}
+    hints:
+      - "Compare the bare column with a half-open range of timestamps."
+  - id: optimization-index-the-join
+    title: Index the join
+    prompt: |
+      This report scans `orders` for every Swedish customer:
+      `SELECT c.email, count(o.id) AS orders FROM customers AS c JOIN orders AS o ON o.customer_id = c.id WHERE c.country = 'SE' GROUP BY c.email`.
+      In one script, create the index that lets SQLite search `orders` by customer, then run the report
+      unchanged.
+    starter: |
+      SELECT c.email, count(o.id) AS orders
+      FROM customers AS c JOIN orders AS o ON o.customer_id = c.id
+      WHERE c.country = 'SE'
+      GROUP BY c.email
+    solution: |
+      CREATE INDEX idx_orders_customer ON orders (customer_id);
+      SELECT c.email, count(o.id) AS orders
+      FROM customers AS c JOIN orders AS o ON o.customer_id = c.id
+      WHERE c.country = 'SE'
+      GROUP BY c.email;
+    check: {plan: {searched: [orders]}}
+    hints:
+      - "Which column of `orders` does the join look up?"
+dialect_notes:
+  postgres: "`pg_stat_statements` finds the queries worth optimizing; `EXPLAIN (ANALYZE, BUFFERS)` shows where the time and I/O go."
+  mysql: "The slow query log and `performance_schema` statement digests identify expensive queries."
+  mssql: "Query Store and the missing-index DMVs suggest candidates; evaluate each suggestion before adding it."
+  duckdb: "As a columnar engine, DuckDB benefits most from selecting fewer columns and filtering early; indexes matter far less."
+references:
+  - title: Use The Index, Luke - the where clause
+    url: https://use-the-index-luke.com/sql/where-clause
+  - title: SQLite query optimizer overview
+    url: https://www.sqlite.org/optoverview.html

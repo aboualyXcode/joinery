@@ -1,0 +1,156 @@
+id: sql-security
+title: SQL security
+module: production
+level: advanced
+minutes: 25
+dataset: shop
+summary: Prevent SQL injection with parameters, apply least privilege, expose data through views and row-level policies, mask sensitive values and audit changes.
+objectives:
+  - Explain how SQL injection works and prevent it with bound parameters
+  - Apply least privilege with roles and grants
+  - Restrict and mask data with views and row-level security
+  - Audit changes with triggers
+sections:
+  - title: SQL injection
+    body: |
+      **SQL injection** happens when user input is pasted into SQL text. If a login form builds
+      `"... WHERE email = '" + input + "'"` and someone types `' OR '1'='1`, the query becomes the one
+      below and returns every customer.
+
+      The fix is **bound parameters**: the SQL text and the values travel separately, so input can never
+      change the structure of the query.
+
+      ```python
+      # Vulnerable: input becomes SQL
+      cur.execute(f"SELECT id FROM customers WHERE email = '{email}'")
+      # Safe: the driver sends the value separately
+      cur.execute("SELECT id FROM customers WHERE email = ?", (email,))
+      ```
+
+      Parameters cannot stand in for identifiers such as table or column names; when those are dynamic,
+      check them against an allowlist. Escaping by hand is fragile; ORMs and query builders bind
+      parameters for you as long as you do not concatenate raw SQL.
+    examples:
+      - id: sec-injected
+        title: What the injected query does
+        sql: |
+          SELECT id, email
+          FROM customers
+          WHERE email = '' OR '1' = '1';
+        portable: true
+  - title: Least privilege
+    body: |
+      Each application and person should get only the privileges it needs. In server databases:
+
+      ```sql
+      CREATE ROLE reporting NOLOGIN;
+      GRANT SELECT ON orders, order_items TO reporting;
+      CREATE ROLE app_web LOGIN PASSWORD '...';
+      GRANT SELECT, INSERT, UPDATE ON orders TO app_web;
+      ```
+
+      Never let an application connect as a superuser, keep credentials in a secrets manager rather than
+      in code, and use separate roles for migrations and for the running application.
+      SQLite has no users: file permissions protect the database file. Joinery's own sandbox is a worked
+      example of the same principle: every run gets a throwaway copy and an authorizer refuses
+      dangerous commands.
+    examples:
+      - id: sec-sandbox
+        title: The sandbox refuses ATTACH
+        sql: |
+          ATTACH DATABASE '/etc/passwd' AS secrets;
+        expect: {error: not authorized}
+  - title: Views, row-level security and masking
+    body: |
+      A **view** exposes a chosen subset of columns and rows, and can mask sensitive values, so you grant
+      access to the view instead of the table. PostgreSQL adds **row-level security** policies that filter
+      rows per user automatically:
+
+      ```sql
+      ALTER TABLE orders ENABLE ROW LEVEL SECURITY;
+      CREATE POLICY own_orders ON orders
+        USING (customer_id = current_setting('app.customer_id')::int);
+      ```
+
+      SQL Server offers row-level security and dynamic data masking; MySQL relies on views.
+    examples:
+      - id: sec-masked-view
+        title: A masked directory
+        sql: |
+          CREATE VIEW customer_directory AS
+          SELECT id, first_name, country,
+                 substr(email, 1, 1) || '***' || substr(email, instr(email, '@')) AS email_masked
+          FROM customers;
+          SELECT * FROM customer_directory LIMIT 5;
+  - title: Auditing changes
+    body: |
+      An audit trail records who changed what and when. A trigger can capture every change at the
+      database level, even changes made outside the application. In server databases record
+      `current_user` too; for compliance, consider the engine's native audit features.
+    examples:
+      - id: sec-audit
+        title: An audit trigger
+        sql: |
+          CREATE TABLE salary_audit (employee_id INTEGER, old_salary REAL, new_salary REAL,
+                                     changed_at TEXT DEFAULT CURRENT_TIMESTAMP);
+          CREATE TRIGGER trg_salary_audit AFTER UPDATE OF salary ON employees
+          WHEN old.salary <> new.salary
+          BEGIN
+            INSERT INTO salary_audit (employee_id, old_salary, new_salary)
+            VALUES (old.id, old.salary, new.salary);
+          END;
+          UPDATE employees SET salary = salary * 1.03 WHERE department = 'Finance';
+          SELECT employee_id, old_salary, round(new_salary, 2) AS new_salary FROM salary_audit;
+exercises:
+  - id: security-masked-directory
+    title: Mask the emails
+    prompt: Create a view `customer_directory` with `id`, `first_name`, `country` and `email_masked`, where the masked email is the first character, then `***`, then everything from the `@` onwards (for example `a***@example.com`).
+    starter: |
+      CREATE VIEW customer_directory AS
+      SELECT id, first_name, country, email AS email_masked FROM customers
+    solution: |
+      CREATE VIEW customer_directory AS
+      SELECT id, first_name, country,
+             substr(email, 1, 1) || '***' || substr(email, instr(email, '@')) AS email_masked
+      FROM customers
+    check:
+      mode: state
+      verify: "SELECT id, first_name, country, email_masked FROM customer_directory ORDER BY id"
+    hints:
+      - "`instr(email, '@')` gives the position of the `@`, and `substr(email, n)` returns the rest from there."
+  - id: security-price-audit
+    title: Audit price changes
+    prompt: |
+      Create a table `price_audit (product_id, old_price, new_price, changed_at)` and a trigger that
+      inserts a row whenever a product's `unit_price` changes. Then set product 1's price to 17.00.
+    starter: |
+      CREATE TABLE price_audit (product_id INTEGER, old_price REAL, new_price REAL,
+                                changed_at TEXT DEFAULT CURRENT_TIMESTAMP);
+      UPDATE products SET unit_price = 17.00 WHERE id = 1;
+    solution: |
+      CREATE TABLE price_audit (product_id INTEGER, old_price REAL, new_price REAL,
+                                changed_at TEXT DEFAULT CURRENT_TIMESTAMP);
+      CREATE TRIGGER trg_price_audit AFTER UPDATE OF unit_price ON products
+      WHEN old.unit_price <> new.unit_price
+      BEGIN
+        INSERT INTO price_audit (product_id, old_price, new_price)
+        VALUES (old.id, old.unit_price, new.unit_price);
+      END;
+      UPDATE products SET unit_price = 17.00 WHERE id = 1;
+    check:
+      mode: state
+      verify: "SELECT product_id, old_price, new_price FROM price_audit"
+    hints:
+      - "Create the trigger before the `UPDATE`, or nothing is recorded."
+dialect_notes:
+  postgres: "Roles, schema-level privileges, row-level security policies and the `pgaudit` extension."
+  mysql: "Roles since 8.0, `GRANT` at global, database, table and column level; audit plugins in some editions."
+  mssql: "Logins and users, schemas, row-level security, dynamic data masking, Always Encrypted and SQL Server Audit."
+  duckdb: "An embedded engine with no users: secure the host process, and see the DuckDB security guide for running untrusted SQL."
+references:
+  - title: OWASP SQL injection prevention cheat sheet
+    url: https://cheatsheetseries.owasp.org/cheatsheets/SQL_Injection_Prevention_Cheat_Sheet.html
+  - title: PostgreSQL row security policies
+    url: https://www.postgresql.org/docs/current/ddl-rowsecurity.html
+  - title: SQLite - defense against the dark arts
+    url: https://www.sqlite.org/security.html

@@ -1,0 +1,253 @@
+# Engine reference and feature matrix shown on the Reference page.
+# Levels: yes, partial, no. Last reviewed: October 2026.
+engines:
+  - id: sqlite
+    name: SQLite
+    release: "3.53 (2026); Joinery needs 3.45 or later"
+    status: Verified in Joinery's test suite
+    driver: Python standard library sqlite3
+    docs: https://www.sqlite.org/docs.html
+  - id: postgres
+    name: PostgreSQL
+    release: "18.6 current; 19 in beta (release candidate due October 2026)"
+    status: Experimental in Joinery, validated by the engines CI workflow
+    driver: psycopg 3.3
+    docs: https://www.postgresql.org/docs/current/
+  - id: mysql
+    name: MySQL
+    release: "9.7 LTS (April 2026) and 8.4 LTS; 8.0 reached end of life"
+    status: Experimental in Joinery; DDL is limited to temporary tables
+    driver: PyMySQL 1.1
+    docs: https://dev.mysql.com/doc/refman/9.7/en/
+  - id: mssql
+    name: SQL Server
+    release: "SQL Server 2025 (17.x)"
+    status: Experimental in Joinery, validated by the engines CI workflow
+    driver: mssql-python 1.15 (Microsoft's official driver, no ODBC install needed)
+    docs: https://learn.microsoft.com/sql/sql-server/
+  - id: duckdb
+    name: DuckDB
+    release: "1.5.6 (September 2026); 1.4 LTS; 2.0 planned for October 2026"
+    status: Experimental in Joinery; runs in the same process sandbox as SQLite
+    driver: duckdb Python package
+    docs: https://duckdb.org/docs/stable/
+standard: >-
+  The current SQL standard is ISO/IEC 9075:2023 (SQL:2023). It added a JSON data type, simplified JSON
+  accessors, ANY_VALUE, GREATEST and LEAST, and Part 16, property graph queries (SQL/PGQ).
+features:
+  - id: limit
+    name: Limiting rows
+    standard: "SQL:2008 FETCH FIRST n ROWS ONLY"
+    support:
+      sqlite: {level: "yes", note: "`LIMIT n OFFSET k`"}
+      postgres: {level: "yes", note: "`LIMIT`/`OFFSET` and `FETCH FIRST ... WITH TIES`"}
+      mysql: {level: "yes", note: "`LIMIT n OFFSET k` or `LIMIT k, n`"}
+      mssql: {level: partial, note: "`TOP (n)` or `OFFSET k ROWS FETCH NEXT n ROWS ONLY`"}
+      duckdb: {level: "yes", note: "`LIMIT`/`OFFSET`"}
+  - id: full-join
+    name: FULL OUTER JOIN
+    standard: SQL-92
+    support:
+      sqlite: {level: "yes", note: "Since 3.39"}
+      postgres: {level: "yes"}
+      mysql: {level: "no", note: "Emulate with `LEFT JOIN ... UNION ALL` the unmatched right rows"}
+      mssql: {level: "yes"}
+      duckdb: {level: "yes"}
+  - id: lateral
+    name: Lateral joins
+    standard: "SQL:1999 LATERAL"
+    support:
+      sqlite: {level: "no", note: "Use correlated subqueries"}
+      postgres: {level: "yes", note: "`LATERAL`"}
+      mysql: {level: "yes", note: "`LATERAL` since 8.0.14"}
+      mssql: {level: partial, note: "`CROSS APPLY` / `OUTER APPLY`"}
+      duckdb: {level: "yes", note: "Explicit and implicit lateral joins"}
+  - id: set-operations
+    name: INTERSECT and EXCEPT
+    standard: SQL-92
+    support:
+      sqlite: {level: "yes"}
+      postgres: {level: "yes", note: "Including `ALL` variants"}
+      mysql: {level: "yes", note: "Since 8.0.31"}
+      mssql: {level: partial, note: "No `ALL` variants"}
+      duckdb: {level: "yes", note: "Plus `UNION BY NAME`"}
+  - id: recursive-cte
+    name: Recursive CTEs
+    standard: "SQL:1999 WITH RECURSIVE"
+    support:
+      sqlite: {level: "yes"}
+      postgres: {level: "yes", note: "`SEARCH` and `CYCLE` clauses since 14"}
+      mysql: {level: "yes", note: "Since 8.0"}
+      mssql: {level: partial, note: "No `RECURSIVE` keyword; 100 levels unless `OPTION (MAXRECURSION n)`"}
+      duckdb: {level: "yes"}
+  - id: window-functions
+    name: Window functions
+    standard: "SQL:2003"
+    support:
+      sqlite: {level: "yes", note: "Since 3.25, with `GROUPS` frames and `EXCLUDE`"}
+      postgres: {level: "yes", note: "All frame modes"}
+      mysql: {level: partial, note: "Since 8.0; no `GROUPS` frames"}
+      mssql: {level: partial, note: "`RANGE` only with UNBOUNDED or CURRENT ROW"}
+      duckdb: {level: "yes"}
+  - id: qualify
+    name: QUALIFY (filter on window results)
+    standard: Not standard
+    support:
+      sqlite: {level: "no", note: "Filter in an outer query"}
+      postgres: {level: "no", note: "Filter in an outer query"}
+      mysql: {level: "no", note: "Filter in an outer query"}
+      mssql: {level: "no", note: "Filter in an outer query"}
+      duckdb: {level: "yes"}
+  - id: filter-clause
+    name: Aggregate FILTER clause
+    standard: "SQL:2003"
+    support:
+      sqlite: {level: "yes", note: "Since 3.30"}
+      postgres: {level: "yes"}
+      mysql: {level: "no", note: "Use `CASE` inside the aggregate"}
+      mssql: {level: "no", note: "Use `CASE` inside the aggregate"}
+      duckdb: {level: "yes"}
+  - id: returning
+    name: Returning changed rows
+    standard: Not standard (SQL:2023 has no RETURNING)
+    support:
+      sqlite: {level: "yes", note: "`RETURNING` since 3.35"}
+      postgres: {level: "yes", note: "`RETURNING`; `old`/`new` aliases in 18"}
+      mysql: {level: "no"}
+      mssql: {level: partial, note: "`OUTPUT inserted.*, deleted.*`"}
+      duckdb: {level: "yes"}
+  - id: upsert
+    name: Upsert
+    standard: "SQL:2003 MERGE"
+    support:
+      sqlite: {level: "yes", note: "`ON CONFLICT ... DO UPDATE`"}
+      postgres: {level: "yes", note: "`ON CONFLICT` and `MERGE` (15+)"}
+      mysql: {level: "yes", note: "`ON DUPLICATE KEY UPDATE`"}
+      mssql: {level: partial, note: "`MERGE`"}
+      duckdb: {level: "yes", note: "`ON CONFLICT`, `INSERT OR REPLACE`, `MERGE INTO` (1.4+)"}
+  - id: concat
+    name: String concatenation
+    standard: "`||`"
+    support:
+      sqlite: {level: "yes", note: "`||`"}
+      postgres: {level: "yes", note: "`||`"}
+      mysql: {level: partial, note: "`CONCAT()`; `||` is OR by default"}
+      mssql: {level: "yes", note: "`+`, `CONCAT()`, and `||` from SQL Server 2025"}
+      duckdb: {level: "yes", note: "`||`"}
+  - id: identifiers
+    name: Quoted identifiers
+    standard: "Double quotes"
+    support:
+      sqlite: {level: "yes", note: "`\"x\"` (also `[x]` and backticks)"}
+      postgres: {level: "yes", note: "`\"x\"`; unquoted names fold to lower case"}
+      mysql: {level: partial, note: "Backticks; double quotes need `ANSI_QUOTES`"}
+      mssql: {level: "yes", note: "`[x]` or `\"x\"`"}
+      duckdb: {level: "yes", note: "`\"x\"`"}
+  - id: boolean
+    name: Boolean type
+    standard: "SQL:1999 BOOLEAN"
+    support:
+      sqlite: {level: partial, note: "Stored as 0 and 1"}
+      postgres: {level: "yes"}
+      mysql: {level: partial, note: "`BOOLEAN` is `TINYINT(1)`"}
+      mssql: {level: partial, note: "`BIT`"}
+      duckdb: {level: "yes"}
+  - id: regex
+    name: Regular expressions
+    standard: "SQL:2008 LIKE_REGEX"
+    support:
+      sqlite: {level: "no", note: "Only through an application-defined function"}
+      postgres: {level: "yes", note: "`~`, `regexp_match`, `regexp_replace`"}
+      mysql: {level: "yes", note: "`REGEXP_LIKE` since 8.0"}
+      mssql: {level: "yes", note: "`REGEXP_LIKE` and friends in SQL Server 2025 (compatibility level 170)"}
+      duckdb: {level: "yes", note: "`regexp_matches`, `regexp_replace`"}
+  - id: json
+    name: JSON
+    standard: "SQL:2016 functions; SQL:2023 JSON type"
+    support:
+      sqlite: {level: "yes", note: "Built-in JSON functions, `->`/`->>`, JSONB since 3.45"}
+      postgres: {level: "yes", note: "`jsonb`, GIN indexes, `JSON_TABLE` (17)"}
+      mysql: {level: "yes", note: "`JSON` type, `JSON_TABLE`"}
+      mssql: {level: "yes", note: "Functions since 2016; native `json` type in 2025"}
+      duckdb: {level: "yes", note: "JSON extension; `VARIANT` type in 1.5"}
+  - id: date-trunc
+    name: Truncating dates
+    standard: Not standard
+    support:
+      sqlite: {level: partial, note: "`date(d, 'start of month')`, `strftime()`"}
+      postgres: {level: "yes", note: "`date_trunc()`"}
+      mysql: {level: partial, note: "`DATE_FORMAT()`"}
+      mssql: {level: "yes", note: "`DATETRUNC` (2022+), `DATE_BUCKET`"}
+      duckdb: {level: "yes", note: "`date_trunc()`, `time_bucket()`"}
+  - id: series
+    name: Generating series
+    standard: Not standard
+    support:
+      sqlite: {level: partial, note: "Recursive CTE (generate_series exists only as an extension)"}
+      postgres: {level: "yes", note: "`generate_series()`"}
+      mysql: {level: "no", note: "Recursive CTE"}
+      mssql: {level: "yes", note: "`GENERATE_SERIES()` (2022+)"}
+      duckdb: {level: "yes", note: "`generate_series()`, `range()`"}
+  - id: string-agg
+    name: String aggregation
+    standard: "SQL:2016 LISTAGG"
+    support:
+      sqlite: {level: "yes", note: "`string_agg` (3.44+) and `group_concat`, with `ORDER BY` inside"}
+      postgres: {level: "yes", note: "`string_agg(x, ',' ORDER BY y)`"}
+      mysql: {level: partial, note: "`GROUP_CONCAT(x ORDER BY y SEPARATOR ',')`"}
+      mssql: {level: "yes", note: "`STRING_AGG(x, ',') WITHIN GROUP (ORDER BY y)`"}
+      duckdb: {level: "yes", note: "`string_agg`, `listagg`"}
+  - id: distinct-from
+    name: IS DISTINCT FROM
+    standard: "SQL:1999"
+    support:
+      sqlite: {level: "yes", note: "Since 3.39; also `IS` and `IS NOT`"}
+      postgres: {level: "yes"}
+      mysql: {level: partial, note: "`<=>` null-safe equality"}
+      mssql: {level: "yes", note: "Since 2022"}
+      duckdb: {level: "yes"}
+  - id: transactional-ddl
+    name: Transactional DDL
+    standard: Implementation-defined
+    support:
+      sqlite: {level: "yes"}
+      postgres: {level: "yes", note: "Except a few commands such as `CREATE INDEX CONCURRENTLY`"}
+      mysql: {level: "no", note: "DDL commits implicitly"}
+      mssql: {level: "yes", note: "Most DDL"}
+      duckdb: {level: "yes"}
+  - id: isolation
+    name: Default isolation level
+    standard: SERIALIZABLE
+    support:
+      sqlite: {level: "yes", note: "Serializable; one writer at a time"}
+      postgres: {level: partial, note: "READ COMMITTED"}
+      mysql: {level: partial, note: "REPEATABLE READ (InnoDB)"}
+      mssql: {level: partial, note: "READ COMMITTED with locking; row versioning optional"}
+      duckdb: {level: "yes", note: "Snapshot isolation (optimistic MVCC)"}
+  - id: partial-index
+    name: Partial (filtered) indexes
+    standard: Not standard
+    support:
+      sqlite: {level: "yes"}
+      postgres: {level: "yes"}
+      mysql: {level: "no"}
+      mssql: {level: "yes", note: "Filtered indexes"}
+      duckdb: {level: "no"}
+  - id: generated-columns
+    name: Generated columns
+    standard: "SQL:2003"
+    support:
+      sqlite: {level: "yes", note: "`VIRTUAL` or `STORED` since 3.31"}
+      postgres: {level: "yes", note: "`STORED`; `VIRTUAL` (the new default) in 18"}
+      mysql: {level: "yes", note: "`VIRTUAL` or `STORED`"}
+      mssql: {level: "yes", note: "Computed columns, optionally `PERSISTED`"}
+      duckdb: {level: partial, note: "`VIRTUAL` only"}
+  - id: explain
+    name: Inspecting plans
+    standard: Not standard
+    support:
+      sqlite: {level: "yes", note: "`EXPLAIN QUERY PLAN` and `EXPLAIN`"}
+      postgres: {level: "yes", note: "`EXPLAIN (ANALYZE, BUFFERS)`"}
+      mysql: {level: "yes", note: "`EXPLAIN ANALYZE`, `EXPLAIN FORMAT=TREE`"}
+      mssql: {level: "yes", note: "Estimated and actual plans, Query Store"}
+      duckdb: {level: "yes", note: "`EXPLAIN ANALYZE`"}

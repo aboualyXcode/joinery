@@ -1,0 +1,124 @@
+id: testing-and-migrations
+title: Testing, migrations and deployment
+module: production
+level: advanced
+minutes: 30
+dataset: shop
+summary: Test SQL with assertions and fixtures, version schema changes as migrations, change schemas without downtime and deploy safely.
+objectives:
+  - Write assertion queries and test them against the real engine
+  - Version schema changes with ordered, recorded migrations
+  - Apply the expand and contract pattern for zero-downtime changes
+  - Plan deployments that can be rolled back
+sections:
+  - title: Testing SQL
+    body: |
+      Treat SQL like code. An **assertion query** returns the rows that break a rule, so an empty result
+      means the test passes. Run tests against the same engine and version as production: dialects
+      differ, and a test that passes on SQLite proves little about PostgreSQL. Seed small, readable
+      fixtures; for reports, compare against stored expected results ("golden" files). This project
+      tests every lesson the same way.
+    examples:
+      - id: test-assertions
+        title: Business rules as assertions
+        sql: |
+          SELECT 'delivered without capture' AS rule, count(*) AS violations
+          FROM orders AS o
+          WHERE o.status = 'delivered'
+            AND NOT EXISTS (SELECT 1 FROM payments AS p WHERE p.order_id = o.id AND p.status = 'captured')
+          UNION ALL
+          SELECT 'delivered before shipped', count(*) FROM orders WHERE delivered_at < shipped_at
+          UNION ALL
+          SELECT 'line discount above line value', count(*) FROM order_items
+          WHERE discount > quantity * unit_price;
+  - title: Versioned migrations
+    body: |
+      Never change a production schema by hand. Write each change as a numbered **migration** file,
+      apply migrations in order, and record the applied versions in a table so every environment can be
+      brought to the same state. Tools such as Flyway, Liquibase, Alembic, Atlas or a framework's
+      migration runner do the bookkeeping. Prefer forward-only migrations: to undo a change, write a new
+      migration.
+    examples:
+      - id: migration-table
+        title: Recording migrations
+        sql: |
+          CREATE TABLE schema_migrations (
+            version    INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+          );
+          BEGIN;
+          CREATE INDEX idx_orders_customer ON orders (customer_id);
+          INSERT INTO schema_migrations (version) VALUES (1);
+          COMMIT;
+          SELECT * FROM schema_migrations;
+  - title: Expand and contract
+    body: |
+      Renaming a column in one step breaks every running copy of the application that still uses the old
+      name. Split the change instead:
+
+      1. **Expand**: add the new column (nullable, so it is instant) and write to both.
+      2. **Migrate**: backfill existing rows, in batches on large tables.
+      3. **Switch**: read from the new column; add constraints once the data is clean.
+      4. **Contract**: remove the old column after nothing uses it.
+
+      Create indexes without blocking writes: `CREATE INDEX CONCURRENTLY` in PostgreSQL, `ALGORITHM=INPLACE`
+      in MySQL, `WITH (ONLINE = ON)` in SQL Server. Remember that MySQL commits DDL immediately, so a
+      failed multi-step migration cannot be rolled back as a unit.
+    examples:
+      - id: migration-expand
+        title: The expand and backfill steps
+        sql: |
+          ALTER TABLE customers ADD COLUMN full_name TEXT;
+          UPDATE customers SET full_name = first_name || ' ' || last_name WHERE full_name IS NULL;
+          SELECT id, first_name, last_name, full_name FROM customers LIMIT 5;
+  - title: Deploying safely
+    body: |
+      Apply backward-compatible migrations **before** deploying the code that needs them, so old and new
+      application versions both work during the rollout. Take and test backups, measure how long a
+      migration takes on production-sized data first, set lock and statement timeouts so a migration
+      cannot stall traffic, and keep a feature flag around risky changes so you can turn them off without
+      a rollback.
+exercises:
+  - id: testing-payment-assertion
+    title: An assertion query
+    prompt: Write an assertion that returns the `id` of every delivered order with no captured payment. On healthy data it returns no rows.
+    starter: SELECT o.id FROM orders AS o WHERE o.status = 'delivered'
+    solution: |
+      SELECT o.id
+      FROM orders AS o
+      WHERE o.status = 'delivered'
+        AND NOT EXISTS (SELECT 1 FROM payments AS p WHERE p.order_id = o.id AND p.status = 'captured')
+    hints:
+      - "Return only the orders that break the rule."
+  - id: migrations-expand-step
+    title: Write the expand migration
+    prompt: |
+      Create a `schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP)`
+      table. Then, in a transaction, add a `full_name` column to `customers`, backfill it as
+      `first_name || ' ' || last_name`, and record version `2`.
+    starter: ALTER TABLE customers ADD COLUMN full_name TEXT
+    solution: |
+      CREATE TABLE schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP);
+      BEGIN;
+      ALTER TABLE customers ADD COLUMN full_name TEXT;
+      UPDATE customers SET full_name = first_name || ' ' || last_name;
+      INSERT INTO schema_migrations (version) VALUES (2);
+      COMMIT;
+    check:
+      mode: state
+      verify: |
+        SELECT 'backfilled' AS item, count(*) AS value FROM customers WHERE full_name = first_name || ' ' || last_name
+        UNION ALL
+        SELECT 'version', max(version) FROM schema_migrations
+    hints:
+      - "Create the migrations table first, then wrap the change and its record in `BEGIN` ... `COMMIT`."
+dialect_notes:
+  postgres: "Transactional DDL lets a migration roll back as a unit, but `CREATE INDEX CONCURRENTLY` cannot run inside a transaction. Set `lock_timeout` for migrations."
+  mysql: "DDL commits implicitly. Online DDL (`ALGORITHM=INPLACE` or `INSTANT`) avoids long table locks for many changes."
+  mssql: "Most DDL is transactional. Online index operations require Enterprise edition features."
+  duckdb: "DDL is transactional; schema changes are cheap because DuckDB stores data by column."
+references:
+  - title: PostgreSQL - building indexes concurrently
+    url: https://www.postgresql.org/docs/current/sql-createindex.html#SQL-CREATEINDEX-CONCURRENTLY
+  - title: SQLite ALTER TABLE
+    url: https://www.sqlite.org/lang_altertable.html

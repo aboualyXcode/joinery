@@ -1,0 +1,128 @@
+id: ctes
+title: Common table expressions
+module: combining
+level: intermediate
+minutes: 20
+dataset: shop
+summary: Name intermediate results with WITH, chain them into readable pipelines and know when they are materialized.
+objectives:
+  - Write `WITH name AS (...)` queries
+  - Chain CTEs that build on each other
+  - Choose between CTEs, subqueries and views
+sections:
+  - title: Naming a step
+    body: |
+      A **common table expression** (CTE) names a subquery up front, so the main query reads like a
+      sentence. Each CTE can be referenced as if it were a table, as often as you like.
+    examples:
+      - id: cte-order-totals
+        title: Average order value via a CTE
+        sql: |
+          WITH order_totals AS (
+            SELECT order_id, sum(quantity * unit_price - discount) AS total
+            FROM order_items
+            GROUP BY order_id
+          )
+          SELECT count(*) AS orders, round(avg(total), 2) AS avg_total, round(max(total), 2) AS max_total
+          FROM order_totals;
+        portable: true
+        mode: steps
+  - title: Chaining CTEs into a pipeline
+    body: |
+      Later CTEs can read earlier ones. This turns a complicated report into small steps you can test
+      one at a time: change the final `SELECT` to `SELECT * FROM customer_spend` to inspect a step.
+    examples:
+      - id: cte-tiers
+        title: Customer spend tiers
+        sql: |
+          WITH order_totals AS (
+            SELECT order_id, sum(quantity * unit_price - discount) AS total
+            FROM order_items
+            GROUP BY order_id
+          ),
+          customer_spend AS (
+            SELECT o.customer_id, sum(t.total) AS spend
+            FROM orders AS o
+            JOIN order_totals AS t ON t.order_id = o.id
+            WHERE o.status = 'delivered'
+            GROUP BY o.customer_id
+          )
+          SELECT CASE WHEN spend >= 500 THEN 'gold'
+                      WHEN spend >= 200 THEN 'silver'
+                      ELSE 'bronze' END AS tier,
+                 count(*) AS customers,
+                 round(avg(spend), 2) AS avg_spend
+          FROM customer_spend
+          GROUP BY tier
+          ORDER BY avg_spend DESC;
+        portable: true
+  - title: CTEs, subqueries and views
+    body: |
+      For a single query, a CTE and a derived table usually produce the same plan. PostgreSQL 12+ and
+      SQLite inline a CTE that is referenced once and may materialize one referenced several times; you
+      can force either with `AS MATERIALIZED` or `AS NOT MATERIALIZED`.
+
+      When several queries need the same logic, promote it to a **view**. CTEs are about readability,
+      not caching across queries.
+    examples:
+      - id: cte-materialized
+        title: Asking for materialization
+        sql: |
+          WITH recent AS MATERIALIZED (
+            SELECT * FROM orders WHERE ordered_at >= '2026-06-01'
+          )
+          SELECT status, count(*) FROM recent GROUP BY status;
+        mode: plan
+exercises:
+  - id: ctes-big-orders
+    title: Orders worth 150 or more
+    prompt: Using a CTE that computes each order's total (`quantity * unit_price - discount`, summed per order), return `order_id` and the `total` rounded to two decimals for orders whose total is at least 150.
+    starter: |
+      WITH totals AS (
+        SELECT order_id, sum(quantity * unit_price) AS total
+        FROM order_items
+        GROUP BY order_id
+      )
+      SELECT order_id, round(total, 2) AS total FROM totals WHERE total >= 150
+    solution: |
+      WITH totals AS (
+        SELECT order_id, sum(quantity * unit_price - discount) AS total
+        FROM order_items
+        GROUP BY order_id
+      )
+      SELECT order_id, round(total, 2) AS total FROM totals WHERE total >= 150
+    hints:
+      - "The starter forgets the discount."
+  - id: ctes-top-level-revenue
+    title: Revenue by top-level category
+    prompt: Categories form a two-level tree (`categories.parent_id`). Return revenue (`quantity * unit_price - discount`, rounded to 2) per **top-level** category (Coffee, Tea, Equipment, Gifts) as `category` and `revenue`.
+    starter: |
+      SELECT c.name AS category, round(sum(i.quantity * i.unit_price - i.discount), 2) AS revenue
+      FROM order_items AS i
+      JOIN products   AS p ON p.id = i.product_id
+      JOIN categories AS c ON c.id = p.category_id
+      GROUP BY c.name
+    solution: |
+      WITH product_top AS (
+        SELECT p.id AS product_id, coalesce(c.parent_id, c.id) AS top_id
+        FROM products AS p
+        JOIN categories AS c ON c.id = p.category_id
+      )
+      SELECT c.name AS category, round(sum(i.quantity * i.unit_price - i.discount), 2) AS revenue
+      FROM order_items AS i
+      JOIN product_top AS pt ON pt.product_id = i.product_id
+      JOIN categories  AS c  ON c.id = pt.top_id
+      GROUP BY c.name
+    hints:
+      - "The starter groups by subcategory."
+      - "`coalesce(parent_id, id)` maps a subcategory to its parent and keeps top-level categories as they are."
+dialect_notes:
+  postgres: "CTEs can contain `INSERT`, `UPDATE` and `DELETE` with `RETURNING`, which enables multi-step writes in one statement."
+  mysql: "CTEs arrived in MySQL 8.0."
+  mssql: "Separate a CTE from the previous statement with a semicolon. CTEs are always inlined."
+  duckdb: "Materializes CTEs referenced more than once by default and supports `MATERIALIZED` hints."
+references:
+  - title: PostgreSQL WITH queries
+    url: https://www.postgresql.org/docs/current/queries-with.html
+  - title: SQLite WITH clause
+    url: https://www.sqlite.org/lang_with.html

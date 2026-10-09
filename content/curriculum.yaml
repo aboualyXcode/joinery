@@ -1,0 +1,25 @@
+modules:
+  - id: foundations
+    title: Foundations
+    summary: Read data with SELECT, filter it, sort it, understand types and summarize it.
+    lessons: [select-basics, filtering, sorting-and-paging, data-types, aggregation]
+  - id: combining
+    title: Combining data
+    summary: Join tables, nest queries, name steps with CTEs, combine result sets and compute across rows with window functions.
+    lessons: [joins, subqueries, ctes, set-operations, window-functions]
+  - id: changing
+    title: Changing data and schema
+    summary: Insert, update and delete safely, design tables, enforce integrity, index for speed and control concurrency with transactions.
+    lessons: [modifying-data, schema-design, constraints, indexes, transactions]
+  - id: analytics
+    title: Advanced analytics
+    summary: Walk hierarchies with recursive queries, query JSON, analyze time series and build funnels, cohorts and pivots.
+    lessons: [recursive-queries, json, time-series, analytics-patterns]
+  - id: performance
+    title: Performance
+    summary: Follow a query through the database, read logical and physical plans, and make slow queries fast.
+    lessons: [query-processing, execution-plans, query-optimization]
+  - id: production
+    title: Production SQL
+    summary: Build reliable pipelines, secure your data, test and migrate schemas safely, and troubleshoot like an operator.
+    lessons: [etl-and-data-quality, sql-security, testing-and-migrations, troubleshooting]

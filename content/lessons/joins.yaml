@@ -1,0 +1,212 @@
+id: joins
+title: Joins
+module: combining
+level: beginner
+minutes: 30
+dataset: joinlab
+summary: Combine rows from related tables with inner, outer, semi, anti and self joins, and avoid the fan-out trap.
+objectives:
+  - Match rows across tables with `JOIN ... ON`
+  - Keep unmatched rows with `LEFT`, `RIGHT` and `FULL` outer joins
+  - Answer "has" and "has not" questions with `EXISTS` and `NOT EXISTS`
+  - Recognize when a join multiplies rows
+sections:
+  - title: Matching rows across tables
+    body: |
+      Relational data is split into tables that reference each other through **keys**: `players.team_id`
+      holds the `id` of a row in `teams`. A join pairs rows that satisfy a condition, usually that a
+      foreign key equals a primary key.
+
+      The join lab dataset is tiny on purpose: four teams and seven players. The Foxes have no players,
+      and Fin and Gus have no team. Pick a join type in the visualizer and watch which rows survive.
+    widget: {type: join-visualizer}
+    examples:
+      - id: join-inner
+        title: Players with their team (inner join)
+        sql: |
+          SELECT p.name AS player, t.name AS team
+          FROM players AS p
+          JOIN teams AS t ON t.id = p.team_id;
+        portable: true
+        expect: {rows: 5}
+  - title: Outer joins keep the unmatched
+    body: |
+      An **inner** join drops rows that have no partner. A **left** join keeps every row from the left
+      table and fills the right side with NULL when nothing matches; a **right** join does the opposite;
+      a **full** join keeps unmatched rows from both sides. MySQL has no `FULL JOIN`: combine a left
+      join with the right side's unmatched rows using `UNION ALL`.
+    examples:
+      - id: join-left
+        title: Every player, with a team if they have one
+        sql: |
+          SELECT p.name AS player, t.name AS team
+          FROM players AS p
+          LEFT JOIN teams AS t ON t.id = p.team_id;
+        portable: true
+        expect: {rows: 7}
+      - id: join-full
+        title: Everyone and everything (full join)
+        sql: |
+          SELECT p.name AS player, t.name AS team
+          FROM players AS p
+          FULL OUTER JOIN teams AS t ON t.id = p.team_id;
+        expect: {rows: 8}
+        variants:
+          postgres: |
+            SELECT p.name AS player, t.name AS team
+            FROM players AS p FULL OUTER JOIN teams AS t ON t.id = p.team_id;
+          mssql: |
+            SELECT p.name AS player, t.name AS team
+            FROM players AS p FULL OUTER JOIN teams AS t ON t.id = p.team_id;
+          duckdb: |
+            SELECT p.name AS player, t.name AS team
+            FROM players AS p FULL OUTER JOIN teams AS t ON t.id = p.team_id;
+          mysql: |
+            SELECT p.name AS player, t.name AS team
+            FROM players AS p LEFT JOIN teams AS t ON t.id = p.team_id
+            UNION ALL
+            SELECT NULL, t.name FROM teams AS t
+            WHERE NOT EXISTS (SELECT 1 FROM players AS p WHERE p.team_id = t.id);
+  - title: Semi joins and anti joins
+    body: |
+      Often you only want to know **whether** a match exists. `EXISTS (subquery)` is a *semi join*: it
+      keeps each outer row once, however many matches there are. `NOT EXISTS` is an *anti join*.
+
+      The classic alternative to an anti join is `LEFT JOIN ... WHERE right.id IS NULL`. Avoid
+      `NOT IN (subquery)` for this: if the subquery returns a NULL, `NOT IN` returns no rows at all.
+    examples:
+      - id: join-anti
+        title: Teams without players
+        sql: |
+          SELECT t.name
+          FROM teams AS t
+          WHERE NOT EXISTS (SELECT 1 FROM players AS p WHERE p.team_id = t.id);
+        portable: true
+        expect: {rows: 1}
+      - id: join-anti-left
+        title: The same, as a left join
+        sql: |
+          SELECT t.name
+          FROM teams AS t
+          LEFT JOIN players AS p ON p.team_id = t.id
+          WHERE p.id IS NULL;
+        portable: true
+        expect: {rows: 1}
+  - title: Joins on real data, and the fan-out trap
+    body: |
+      In the shop, an order has many line items and many payments. Joining `orders` to `order_items`
+      produces **one row per line item**, so the order's columns repeat. Joining both items and payments
+      at once multiplies the rows again, and sums double count. Aggregate each child table first, then
+      join the summaries.
+    examples:
+      - id: join-shop-orders
+        title: Orders with customer and products
+        dataset: shop
+        sql: |
+          SELECT o.id AS order_id, c.email, p.name AS product, i.quantity
+          FROM orders AS o
+          JOIN customers   AS c ON c.id = o.customer_id
+          JOIN order_items AS i ON i.order_id = o.id
+          JOIN products    AS p ON p.id = i.product_id
+          WHERE o.id <= 5
+          ORDER BY o.id, i.line_no;
+        portable: true
+      - id: join-fanout
+        title: Double counting, then the fix
+        dataset: shop
+        sql: |
+          -- Wrong: every payment row repeats for every line item.
+          SELECT o.id, sum(pay.amount) AS paid_wrong
+          FROM orders AS o
+          JOIN order_items AS i  ON i.order_id = o.id
+          JOIN payments    AS pay ON pay.order_id = o.id
+          WHERE o.id = 2
+          GROUP BY o.id;
+          -- Right: aggregate payments on their own.
+          SELECT o.id, (SELECT sum(amount) FROM payments WHERE order_id = o.id) AS paid
+          FROM orders AS o
+          WHERE o.id = 2;
+        portable: true
+  - title: Self joins
+    body: |
+      A table can join to itself. In `employees`, `manager_id` points at another employee, so joining
+      the table to a second copy of itself pairs each person with their manager. A left join keeps the
+      CEO, who has no manager.
+    examples:
+      - id: join-self
+        title: Employees and their managers
+        dataset: shop
+        sql: |
+          SELECT e.first_name || ' ' || e.last_name AS employee,
+                 m.first_name || ' ' || m.last_name AS manager
+          FROM employees AS e
+          LEFT JOIN employees AS m ON m.id = e.manager_id
+          ORDER BY e.id;
+exercises:
+  - id: joins-recent-order-emails
+    title: Who ordered recently?
+    dataset: shop
+    prompt: For orders placed on or after `2026-06-25`, return the order `id` and the customer's `email`.
+    starter: SELECT o.id, o.customer_id FROM orders AS o WHERE o.ordered_at >= '2026-06-25'
+    solution: |
+      SELECT o.id, c.email
+      FROM orders AS o
+      JOIN customers AS c ON c.id = o.customer_id
+      WHERE o.ordered_at >= '2026-06-25'
+    hints:
+      - "Join `customers` on `customers.id = orders.customer_id`."
+  - id: joins-never-ordered
+    title: Customers who never ordered
+    dataset: shop
+    prompt: Return the `id` and `email` of every customer who has never placed an order.
+    starter: SELECT c.id, c.email FROM customers AS c JOIN orders AS o ON o.customer_id = c.id
+    solution: |
+      SELECT c.id, c.email
+      FROM customers AS c
+      WHERE NOT EXISTS (SELECT 1 FROM orders AS o WHERE o.customer_id = c.id)
+    hints:
+      - "An inner join keeps only customers who **have** orders."
+      - "Use `NOT EXISTS`, or a left join where the order side is NULL."
+  - id: joins-team-sizes
+    title: Team sizes, including empty teams
+    prompt: Return every team's `name` and its number of `players`, including teams with none.
+    starter: |
+      SELECT t.name, count(*) AS players
+      FROM teams AS t
+      LEFT JOIN players AS p ON p.team_id = t.id
+      GROUP BY t.id, t.name
+    solution: |
+      SELECT t.name, count(p.id) AS players
+      FROM teams AS t
+      LEFT JOIN players AS p ON p.team_id = t.id
+      GROUP BY t.id, t.name
+    hints:
+      - "The Foxes come out with 1 player. Why?"
+      - "`count(*)` counts the NULL-padded row. `count(p.id)` counts only real players."
+  - id: joins-managers
+    title: Everyone and their manager
+    dataset: shop
+    prompt: Return each employee's full name as `employee` and their manager's full name as `manager` (NULL for the CEO), for all 30 employees.
+    starter: |
+      SELECT e.first_name || ' ' || e.last_name AS employee,
+             m.first_name || ' ' || m.last_name AS manager
+      FROM employees AS e
+      JOIN employees AS m ON m.id = e.manager_id
+    solution: |
+      SELECT e.first_name || ' ' || e.last_name AS employee,
+             m.first_name || ' ' || m.last_name AS manager
+      FROM employees AS e
+      LEFT JOIN employees AS m ON m.id = e.manager_id
+    hints:
+      - "The starter loses one person. Who has no manager?"
+dialect_notes:
+  mysql: "No `FULL OUTER JOIN`; emulate it with `LEFT JOIN ... UNION ALL` the unmatched right rows. `LATERAL` derived tables arrived in 8.0.14."
+  mssql: "`CROSS APPLY` and `OUTER APPLY` are SQL Server's lateral joins."
+  postgres: "Supports `LATERAL`, `USING` and `NATURAL` joins. The planner chooses nested loop, hash or merge joins by cost."
+  duckdb: "Adds `ASOF JOIN` for time series, `POSITIONAL JOIN`, and `SEMI`/`ANTI JOIN` keywords."
+  sqlite: "RIGHT and FULL joins require SQLite 3.39 or later."
+references:
+  - title: Visual guide to SQL joins in PostgreSQL docs
+    url: https://www.postgresql.org/docs/current/queries-table-expressions.html
+  - title: SQLite join syntax
+    url: https://www.sqlite.org/syntax/join-clause.html

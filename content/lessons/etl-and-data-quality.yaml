@@ -1,0 +1,290 @@
+id: etl-and-data-quality
+title: ELT pipelines and data quality
+module: production
+level: advanced
+minutes: 40
+dataset: pipeline
+summary: Land raw data, profile and clean it in SQL, deduplicate, load incrementally and idempotently with watermarks, keep history with SCD type 2, and assert data quality.
+objectives:
+  - Profile raw data before trusting it
+  - Clean and validate text values in SQL and route bad rows away
+  - Deduplicate with `row_number()`
+  - Load incrementally with a watermark and an upsert, so reruns are safe
+  - Write data quality checks that return nothing when data is healthy
+sections:
+  - title: Land raw, transform in SQL
+    body: |
+      In **ELT** you load source data as it arrives (here every value is text, mistakes and all), then
+      transform it inside the database with SQL. Keeping the raw layer means you can always re-run a
+      transformation after fixing it. Start by profiling: which formats does a column really contain?
+    examples:
+      - id: etl-profile-dates
+        title: Which date formats arrived?
+        sql: |
+          SELECT CASE
+                   WHEN trim(order_date) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN 'YYYY-MM-DD'
+                   WHEN trim(order_date) GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]' THEN 'DD/MM/YYYY'
+                   WHEN trim(order_date) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*' THEN 'ISO timestamp'
+                   ELSE 'unparseable: ' || quote(order_date)
+                 END AS format,
+                 count(*) AS row_count
+          FROM raw_orders
+          GROUP BY format
+          ORDER BY row_count DESC;
+      - id: etl-cast-trap
+        title: CAST does not validate
+        sql: |
+          SELECT amount, CAST(amount AS REAL) AS cast_value
+          FROM raw_orders
+          WHERE amount NOT GLOB '[0-9]*' OR amount GLOB '*,*'
+          LIMIT 8;
+  - title: Cleaning and rejecting
+    body: |
+      Normalize each column (trim, fix case, convert formats), then validate. SQLite's `CAST('n/a' AS
+      REAL)` quietly returns `0.0`, as the example above shows, so validate the text **before** casting.
+      Instead of silently dropping bad rows, record why each one failed so someone can fix the source.
+    examples:
+      - id: etl-clean
+        title: Cleaned rows with a rejection reason
+        sql: |
+          WITH cleaned AS (
+            SELECT load_id, row_no, order_ref,
+                   lower(trim(customer_email)) AS email,
+                   trim(order_date) AS d,
+                   replace(replace(trim(amount), '$', ''), ',', '.') AS a,
+                   upper(trim(currency)) AS currency,
+                   lower(trim(status)) AS status
+            FROM raw_orders
+          )
+          SELECT order_ref, email, d, a, currency, status,
+                 CASE
+                   WHEN email IS NULL OR email = '' THEN 'missing email'
+                   WHEN NOT (d GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+                             OR d GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]'
+                             OR d GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*') THEN 'bad date'
+                   WHEN a NOT GLOB '[0-9]*' OR a GLOB '*[^0-9.]*' OR a GLOB '*.*.*' THEN 'bad amount'
+                   WHEN currency NOT IN ('USD', 'EUR') THEN 'bad currency'
+                 END AS problem
+          FROM cleaned
+          WHERE load_id = 2
+          ORDER BY problem IS NULL, problem, row_no
+          LIMIT 30;
+  - title: Deduplicating
+    body: |
+      Sources resend rows. Number the versions of each key with `row_number()`, ordered so the version
+      you trust most comes first (here the latest load, then the latest row), and keep number one.
+    examples:
+      - id: etl-dedupe
+        title: Orders that arrived more than once
+        sql: |
+          WITH versions AS (
+            SELECT order_ref, load_id, row_no, lower(trim(status)) AS status,
+                   row_number() OVER (PARTITION BY order_ref ORDER BY load_id DESC, row_no DESC) AS version
+            FROM raw_orders
+          )
+          SELECT * FROM versions
+          WHERE order_ref IN (SELECT order_ref FROM raw_orders GROUP BY order_ref HAVING count(*) > 1)
+          ORDER BY order_ref, version
+          LIMIT 20;
+  - title: Incremental, idempotent loads
+    body: |
+      Reprocessing everything every night stops scaling. An **incremental** load processes only new data,
+      found through a **watermark**: here, the last `load_id` that a *successful* run processed. The
+      failed run on 2026-06-01 must not move it.
+
+      A load is **idempotent** when running it twice leaves the same result as running it once. An upsert
+      keyed on the business key (`order_ref`) gives you that: a rerun updates rows instead of duplicating
+      them. Record each run, including failures, in a run log.
+    examples:
+      - id: etl-watermark
+        title: Where did the last successful run stop?
+        sql: |
+          SELECT pipeline, max(last_load_id) AS watermark
+          FROM etl_runs
+          WHERE status = 'success'
+          GROUP BY pipeline;
+  - title: Slowly changing dimensions
+    body: |
+      When a customer moves country, reports about last year should still show the old country.
+      **Type 2** history keeps one row per version with validity dates: close the current row
+      (`valid_to`, `is_current = false`) and insert the new version, in one transaction.
+    examples:
+      - id: etl-scd2
+        title: Recording a move
+        sql: |
+          BEGIN;
+          UPDATE dim_customer
+          SET valid_to = '2026-06-01', is_current = FALSE
+          WHERE customer_key = 3 AND is_current;
+          INSERT INTO dim_customer (email, full_name, country, valid_from, valid_to, is_current)
+          SELECT email, full_name, 'SE', '2026-06-01', NULL, TRUE FROM dim_customer WHERE customer_key = 3;
+          COMMIT;
+          SELECT * FROM dim_customer WHERE email = (SELECT email FROM dim_customer WHERE customer_key = 3);
+  - title: Data quality checks
+    body: |
+      Express each expectation as a query that returns the **violating** rows. Healthy data returns
+      nothing, so a scheduler or test runner can fail the pipeline whenever a check returns rows. Typical
+      checks: uniqueness of keys, required values present, references resolve, values in range, row
+      counts within expected bounds, and freshness.
+    examples:
+      - id: etl-quality-suite
+        title: A small suite of checks
+        sql: |
+          SELECT 'duplicate order_ref' AS check_name, count(*) AS violations
+          FROM (SELECT order_ref FROM fact_orders GROUP BY order_ref HAVING count(*) > 1)
+          UNION ALL
+          SELECT 'negative amount', count(*) FROM fact_orders WHERE amount < 0
+          UNION ALL
+          SELECT 'unknown customer', count(*) FROM fact_orders AS f
+          WHERE NOT EXISTS (SELECT 1 FROM dim_customer AS d WHERE d.email = f.customer_email)
+          UNION ALL
+          SELECT 'more than one current version', count(*)
+          FROM (SELECT email FROM dim_customer WHERE is_current GROUP BY email HAVING count(*) > 1);
+exercises:
+  - id: etl-reject-reasons
+    title: Profile the second load
+    prompt: |
+      For load 2 of `raw_orders`, return each `reason` and its `row_count`. Check in this order and
+      report the first failure: `missing email` (NULL or blank after trimming), `bad date` (none of the
+      three formats), `bad amount` (after trimming and removing `$` and turning `,` into `.`, only
+      digits and at most one dot, starting with a digit), `bad currency` (not USD or EUR after trimming
+      and upper-casing), otherwise `ok`.
+    starter: |
+      SELECT CASE WHEN customer_email IS NULL THEN 'missing email' ELSE 'ok' END AS reason,
+             count(*) AS row_count
+      FROM raw_orders WHERE load_id = 2
+      GROUP BY reason
+    solution: |
+      WITH c AS (
+        SELECT lower(trim(customer_email)) AS email,
+               trim(order_date) AS d,
+               replace(replace(trim(amount), '$', ''), ',', '.') AS a,
+               upper(trim(currency)) AS cur
+        FROM raw_orders WHERE load_id = 2
+      )
+      SELECT CASE
+               WHEN email IS NULL OR email = '' THEN 'missing email'
+               WHEN NOT (d GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]'
+                         OR d GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]'
+                         OR d GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*') THEN 'bad date'
+               WHEN a NOT GLOB '[0-9]*' OR a GLOB '*[^0-9.]*' OR a GLOB '*.*.*' THEN 'bad amount'
+               WHEN cur NOT IN ('USD', 'EUR') THEN 'bad currency'
+               ELSE 'ok'
+             END AS reason,
+             count(*) AS row_count
+      FROM c
+      GROUP BY reason
+    hints:
+      - "Normalize each column in a CTE first, then classify with one `CASE`."
+      - "`GLOB` patterns are case-sensitive; `[0-9]` matches one digit and `*` any run of characters."
+  - id: etl-latest-versions
+    title: Keep the latest version
+    prompt: Across both loads, return one row per `order_ref` with its `status` (lower-cased and trimmed) taken from the latest version (highest `load_id`, then highest `row_no`).
+    starter: SELECT DISTINCT order_ref, lower(trim(status)) AS status FROM raw_orders
+    solution: |
+      WITH ranked AS (
+        SELECT order_ref, lower(trim(status)) AS status,
+               row_number() OVER (PARTITION BY order_ref ORDER BY load_id DESC, row_no DESC) AS rn
+        FROM raw_orders
+      )
+      SELECT order_ref, status FROM ranked WHERE rn = 1
+    hints:
+      - "Resent orders may have changed status, so `DISTINCT` keeps both versions."
+  - id: etl-incremental-load
+    title: An idempotent incremental load
+    prompt: |
+      The starter cleans the rows newer than the watermark but fails: it inserts duplicates and orders
+      that already exist. Make the load idempotent: keep only the latest version of each `order_ref`
+      (highest `load_id`, then `row_no`), and upsert on `order_ref`, updating every column when the order
+      already exists.
+    starter: |
+      WITH watermark AS (
+        SELECT coalesce(max(last_load_id), 0) AS last_load
+        FROM etl_runs WHERE pipeline = 'orders' AND status = 'success'
+      ),
+      cleaned AS (
+        SELECT r.load_id, r.row_no, r.order_ref,
+               lower(trim(r.customer_email)) AS customer_email,
+               CASE
+                 WHEN trim(r.order_date) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN trim(r.order_date)
+                 WHEN trim(r.order_date) GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]'
+                   THEN substr(trim(r.order_date), 7, 4) || '-' || substr(trim(r.order_date), 4, 2) || '-' || substr(trim(r.order_date), 1, 2)
+                 WHEN trim(r.order_date) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*' THEN substr(trim(r.order_date), 1, 10)
+               END AS order_date,
+               replace(replace(trim(r.amount), '$', ''), ',', '.') AS amount_text,
+               upper(trim(r.currency)) AS currency,
+               lower(trim(r.status)) AS status
+        FROM raw_orders AS r, watermark AS w
+        WHERE r.load_id > w.last_load
+      )
+      INSERT INTO fact_orders (order_ref, customer_email, order_date, amount, currency, status, load_id)
+      SELECT order_ref, customer_email, order_date, round(CAST(amount_text AS REAL), 2), currency, status, load_id
+      FROM cleaned
+      WHERE customer_email <> '' AND order_date IS NOT NULL
+        AND amount_text GLOB '[0-9]*' AND amount_text NOT GLOB '*[^0-9.]*' AND amount_text NOT GLOB '*.*.*'
+        AND currency IN ('USD', 'EUR')
+    solution: |
+      WITH watermark AS (
+        SELECT coalesce(max(last_load_id), 0) AS last_load
+        FROM etl_runs WHERE pipeline = 'orders' AND status = 'success'
+      ),
+      cleaned AS (
+        SELECT r.load_id, r.row_no, r.order_ref,
+               lower(trim(r.customer_email)) AS customer_email,
+               CASE
+                 WHEN trim(r.order_date) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]' THEN trim(r.order_date)
+                 WHEN trim(r.order_date) GLOB '[0-9][0-9]/[0-9][0-9]/[0-9][0-9][0-9][0-9]'
+                   THEN substr(trim(r.order_date), 7, 4) || '-' || substr(trim(r.order_date), 4, 2) || '-' || substr(trim(r.order_date), 1, 2)
+                 WHEN trim(r.order_date) GLOB '[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]T*' THEN substr(trim(r.order_date), 1, 10)
+               END AS order_date,
+               replace(replace(trim(r.amount), '$', ''), ',', '.') AS amount_text,
+               upper(trim(r.currency)) AS currency,
+               lower(trim(r.status)) AS status
+        FROM raw_orders AS r, watermark AS w
+        WHERE r.load_id > w.last_load
+      ),
+      latest AS (
+        SELECT *, row_number() OVER (PARTITION BY order_ref ORDER BY load_id DESC, row_no DESC) AS rn
+        FROM cleaned
+        WHERE customer_email <> '' AND order_date IS NOT NULL
+          AND amount_text GLOB '[0-9]*' AND amount_text NOT GLOB '*[^0-9.]*' AND amount_text NOT GLOB '*.*.*'
+          AND currency IN ('USD', 'EUR')
+      )
+      INSERT INTO fact_orders (order_ref, customer_email, order_date, amount, currency, status, load_id)
+      SELECT order_ref, customer_email, order_date, round(CAST(amount_text AS REAL), 2), currency, status, load_id
+      FROM latest
+      WHERE rn = 1
+      ON CONFLICT (order_ref) DO UPDATE SET
+        customer_email = excluded.customer_email,
+        order_date     = excluded.order_date,
+        amount         = excluded.amount,
+        currency       = excluded.currency,
+        status         = excluded.status,
+        load_id        = excluded.load_id
+    check:
+      mode: state
+      verify: "SELECT order_ref, customer_email, order_date, amount, currency, status, load_id FROM fact_orders ORDER BY order_ref"
+    hints:
+      - "Add a CTE that numbers the versions of each `order_ref` and keep `rn = 1`."
+      - "Finish with `ON CONFLICT (order_ref) DO UPDATE SET col = excluded.col, ...`."
+  - id: etl-orphan-check
+    title: A referential quality check
+    prompt: Write a data quality check that returns each `customer_email` in `fact_orders` with no **current** row in `dim_customer`, and the number of `orders` for it. On healthy data it returns nothing.
+    starter: SELECT customer_email, count(*) AS orders FROM fact_orders GROUP BY customer_email
+    solution: |
+      SELECT f.customer_email, count(*) AS orders
+      FROM fact_orders AS f
+      WHERE NOT EXISTS (SELECT 1 FROM dim_customer AS d WHERE d.email = f.customer_email AND d.is_current)
+      GROUP BY f.customer_email
+    hints:
+      - "Keep only emails for which no current dimension row exists."
+dialect_notes:
+  postgres: "`MERGE` (15+) and `INSERT ... ON CONFLICT` support idempotent loads; `COPY` bulk-loads files; dbt and similar tools organize SQL transformations."
+  mysql: "`LOAD DATA INFILE` bulk-loads; `INSERT ... ON DUPLICATE KEY UPDATE` makes loads idempotent."
+  mssql: "`BULK INSERT`, `MERGE` and temporal tables (system-versioned history) cover loading and history."
+  duckdb: "Reads CSV, JSON and Parquet directly (`read_csv`, `read_parquet`), which makes it a favourite for local ELT."
+references:
+  - title: SQLite UPSERT and the parsing ambiguity with SELECT
+    url: https://www.sqlite.org/lang_upsert.html
+  - title: Kimball Group - slowly changing dimensions
+    url: https://www.kimballgroup.com/data-warehouse-business-intelligence-resources/kimball-techniques/dimensional-modeling-techniques/type-2/

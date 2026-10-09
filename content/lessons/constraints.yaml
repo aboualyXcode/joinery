@@ -1,0 +1,120 @@
+id: constraints
+title: Constraints and data integrity
+module: changing
+level: intermediate
+minutes: 20
+dataset: shop
+summary: Let the database enforce rules with NOT NULL, UNIQUE, CHECK and FOREIGN KEY constraints, and understand how each fails.
+objectives:
+  - Choose the right constraint for a business rule
+  - Read and fix constraint violations
+  - Explain why a CHECK passes on NULL
+  - Use generated columns and referential actions
+sections:
+  - title: Rules the database enforces
+    body: |
+      Application code changes and has bugs; constraints hold for every client, script and migration.
+      They are your last line of defense:
+
+      - `NOT NULL` makes a value required.
+      - `UNIQUE` and `PRIMARY KEY` forbid duplicates.
+      - `CHECK (condition)` enforces a rule on each row.
+      - `FOREIGN KEY` makes references point at existing rows.
+
+      Each statement below breaks one rule. Read the error, and the explanation Joinery adds to it.
+    examples:
+      - id: constraint-unique
+        title: A duplicate email
+        sql: |
+          INSERT INTO customers (email, first_name, last_name, country, signed_up_at)
+          SELECT email, 'Copy', 'Cat', 'GB', '2026-07-01 09:00:00' FROM customers WHERE id = 1;
+        expect: {error: UNIQUE constraint failed}
+      - id: constraint-check
+        title: A zero quantity
+        sql: |
+          UPDATE order_items SET quantity = 0 WHERE order_id = 1;
+        expect: {error: CHECK constraint failed}
+      - id: constraint-foreign-key
+        title: Deleting a customer who has orders
+        sql: |
+          DELETE FROM customers WHERE id = 1;
+        expect: {error: FOREIGN KEY constraint failed}
+      - id: constraint-not-null
+        title: A product without a name
+        sql: |
+          INSERT INTO products (sku, name, category_id, unit_price, cost, launched_on)
+          VALUES ('CF-NEW-250', NULL, 5, 15.00, 6.00, '2026-07-01');
+        expect: {error: NOT NULL constraint failed}
+  - title: CHECK passes on NULL
+    body: |
+      A `CHECK` rejects a row only when its condition is **false**. If the condition is unknown because a
+      value is NULL, the row is accepted. `CHECK (weight_grams > 0)` therefore allows a NULL weight; add
+      `NOT NULL` when a value must be present.
+    examples:
+      - id: constraint-null-check
+        title: NULL slips through CHECK
+        sql: |
+          CREATE TEMP TABLE parcels (weight_grams INTEGER CHECK (weight_grams > 0));
+          INSERT INTO parcels VALUES (250), (NULL);
+          SELECT weight_grams, weight_grams > 0 AS check_result FROM parcels;
+  - title: Generated columns and referential actions
+    body: |
+      A **generated column** is computed from other columns, so it can never disagree with them. SQLite
+      can add `VIRTUAL` generated columns with `ALTER TABLE`.
+
+      A foreign key can say what happens when the parent row is deleted or its key changes:
+      `ON DELETE CASCADE` deletes the children, `ON DELETE SET NULL` clears the reference, and the
+      default (`NO ACTION`/`RESTRICT`) refuses the change. Cascades are convenient, but a single delete
+      can then remove far more rows than intended.
+    examples:
+      - id: constraint-generated
+        title: A line total that cannot drift
+        sql: |
+          ALTER TABLE order_items
+            ADD COLUMN line_total REAL GENERATED ALWAYS AS (quantity * unit_price - discount) VIRTUAL;
+          SELECT order_id, line_no, quantity, unit_price, discount, line_total
+          FROM order_items
+          LIMIT 5;
+      - id: constraint-cascade
+        title: ON DELETE CASCADE in action
+        sql: |
+          CREATE TEMP TABLE carts (id INTEGER PRIMARY KEY);
+          CREATE TEMP TABLE cart_lines (cart_id INTEGER REFERENCES carts (id) ON DELETE CASCADE, sku TEXT);
+          INSERT INTO carts VALUES (1), (2);
+          INSERT INTO cart_lines VALUES (1, 'CF-ETH-250'), (1, 'AC-FIL-100'), (2, 'TE-MAT-030');
+          DELETE FROM carts WHERE id = 1;
+          SELECT * FROM cart_lines;
+exercises:
+  - id: constraints-unique-barcode
+    title: Unique barcodes
+    prompt: Add a text column `barcode` to `products`, create a unique index on it called `uq_products_barcode`, then set product 1's barcode to `5012345678900`.
+    starter: ALTER TABLE products ADD COLUMN barcode TEXT
+    solution: |
+      ALTER TABLE products ADD COLUMN barcode TEXT;
+      CREATE UNIQUE INDEX uq_products_barcode ON products (barcode);
+      UPDATE products SET barcode = '5012345678900' WHERE id = 1;
+    check:
+      mode: state
+      verify: |
+        SELECT name, "unique" FROM pragma_index_list('products') WHERE name = 'uq_products_barcode'
+        UNION ALL
+        SELECT barcode, id FROM products WHERE barcode IS NOT NULL
+    hints:
+      - "`CREATE UNIQUE INDEX name ON table (column)`."
+  - id: constraints-null-weights
+    title: What CHECK lets through
+    prompt: "`CHECK (weight_grams > 0)` would accept some products only because their weight is unknown. Return the `id` and `name` of those products."
+    starter: SELECT id, name FROM products WHERE NOT (weight_grams > 0)
+    solution: SELECT id, name FROM products WHERE weight_grams IS NULL
+    hints:
+      - "`NOT (NULL > 0)` is still unknown, so the starter finds nothing."
+dialect_notes:
+  postgres: "Supports deferrable constraints, exclusion constraints and (since 15) `UNIQUE NULLS NOT DISTINCT`. PostgreSQL 18 adds temporal `WITHOUT OVERLAPS` keys."
+  mysql: "CHECK constraints are enforced since 8.0.16; earlier versions parsed and ignored them."
+  mssql: "Foreign keys can be disabled with `NOCHECK`, which marks them untrusted for the optimizer until re-validated."
+  sqlite: "Foreign key enforcement is off by default for compatibility and must be enabled per connection with `PRAGMA foreign_keys = ON`; Joinery turns it on."
+references:
+  - title: SQLite foreign key support
+    url: https://www.sqlite.org/foreignkeys.html
+  - title: PostgreSQL constraints
+    url: https://www.postgresql.org/docs/current/ddl-constraints.html

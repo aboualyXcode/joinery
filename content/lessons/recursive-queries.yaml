@@ -1,0 +1,177 @@
+id: recursive-queries
+title: Recursive queries
+module: analytics
+level: advanced
+minutes: 25
+dataset: shop
+summary: Generate series, walk trees and graphs, and fill calendar gaps with recursive CTEs, while guarding against runaway recursion.
+objectives:
+  - Write the anchor and recursive parts of `WITH RECURSIVE`
+  - Walk a hierarchy down and up, tracking depth and path
+  - Build calendars to fill gaps in reports
+  - Stop recursion safely
+sections:
+  - title: How recursion works
+    body: |
+      A recursive CTE has two parts joined by `UNION ALL`. The **anchor** runs once and produces the
+      starting rows. The **recursive** part joins the CTE to itself and runs again and again on the rows
+      produced by the previous round, until a round produces nothing. The `WHERE` clause in the recursive
+      part is what stops it.
+    examples:
+      - id: rec-series
+        title: Counting to ten
+        sql: |
+          WITH RECURSIVE n(x) AS (
+            SELECT 1
+            UNION ALL
+            SELECT x + 1 FROM n WHERE x < 10
+          )
+          SELECT x FROM n;
+        expect: {rows: 10}
+        variants:
+          postgres: |
+            WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 10) SELECT x FROM n;
+          mysql: |
+            WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 10) SELECT x FROM n;
+          duckdb: |
+            WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 10) SELECT x FROM n;
+          mssql: |
+            WITH n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 10) SELECT x FROM n;
+  - title: Walking down a hierarchy
+    body: |
+      Starting from the CEO (no manager), each round adds the people who report to someone found in the
+      previous round. Carrying `depth` and a `path` string along makes the tree visible, and sorting by
+      the path prints it in outline order.
+    examples:
+      - id: rec-org-chart
+        title: The org chart
+        sql: |
+          WITH RECURSIVE chain(id, name, title, depth, path) AS (
+            SELECT id, first_name || ' ' || last_name, title, 0, first_name || ' ' || last_name
+            FROM employees
+            WHERE manager_id IS NULL
+            UNION ALL
+            SELECT e.id, e.first_name || ' ' || e.last_name, e.title, c.depth + 1,
+                   c.path || ' > ' || e.first_name || ' ' || e.last_name
+            FROM employees AS e
+            JOIN chain AS c ON e.manager_id = c.id
+          )
+          SELECT substr('            ', 1, depth * 2) || name AS employee, title, depth
+          FROM chain
+          ORDER BY path;
+        expect: {rows: 30}
+      - id: rec-chain-of-command
+        title: Walking up from a roaster to the CEO
+        sql: |
+          WITH RECURSIVE up(id, name, manager_id, step) AS (
+            SELECT id, first_name || ' ' || last_name, manager_id, 0 FROM employees WHERE id = 15
+            UNION ALL
+            SELECT e.id, e.first_name || ' ' || e.last_name, e.manager_id, u.step + 1
+            FROM employees AS e JOIN up AS u ON e.id = u.manager_id
+          )
+          SELECT step, name FROM up ORDER BY step;
+  - title: Calendars for complete reports
+    body: |
+      Grouping by date only produces dates that have data, so quiet days vanish from charts. Generate
+      every date with a recursive CTE (or `generate_series` in PostgreSQL and DuckDB) and left join the
+      facts onto it.
+    examples:
+      - id: rec-calendar
+        title: Every day in the first half of June, with refund counts
+        sql: |
+          WITH RECURSIVE days(day) AS (
+            SELECT '2026-06-01'
+            UNION ALL
+            SELECT date(day, '+1 day') FROM days WHERE day < '2026-06-14'
+          )
+          SELECT d.day, count(o.id) AS refunds
+          FROM days AS d
+          LEFT JOIN orders AS o ON date(o.ordered_at) = d.day AND o.status = 'refunded'
+          GROUP BY d.day
+          ORDER BY d.day;
+        expect: {rows: 14}
+        variants:
+          postgres: |
+            SELECT d::date AS day, count(o.id) AS refunds
+            FROM generate_series(date '2026-06-01', date '2026-06-14', interval '1 day') AS d
+            LEFT JOIN orders AS o ON o.ordered_at::date = d::date AND o.status = 'refunded'
+            GROUP BY d ORDER BY d;
+  - title: Stopping safely
+    body: |
+      Data with a cycle (A manages B, B manages A) makes a naive recursive query run forever. Defend
+      with a depth limit, and in PostgreSQL 14+ with the `CYCLE` clause. SQL Server stops after 100
+      levels unless you set `OPTION (MAXRECURSION n)`. Joinery's time limit stops runaway queries too, but
+      production databases may not.
+    examples:
+      - id: rec-depth-guard
+        title: A depth limit
+        sql: |
+          WITH RECURSIVE walk(id, depth) AS (
+            SELECT id, 0 FROM categories WHERE parent_id IS NULL
+            UNION ALL
+            SELECT c.id, w.depth + 1 FROM categories AS c JOIN walk AS w ON c.parent_id = w.id
+            WHERE w.depth < 10
+          )
+          SELECT depth, count(*) AS categories FROM walk GROUP BY depth;
+exercises:
+  - id: recursive-team-size
+    title: Everyone under Lars
+    prompt: How many people report to Lars Henriksen (employee 2), directly **or indirectly**? Return one value named `reports`.
+    starter: SELECT count(*) AS reports FROM employees WHERE manager_id = 2
+    solution: |
+      WITH RECURSIVE team(id) AS (
+        SELECT id FROM employees WHERE manager_id = 2
+        UNION ALL
+        SELECT e.id FROM employees AS e JOIN team AS t ON e.manager_id = t.id
+      )
+      SELECT count(*) AS reports FROM team
+    hints:
+      - "The starter counts only direct reports."
+      - "Anchor on Lars's direct reports, then repeatedly add their reports."
+  - id: recursive-category-paths
+    title: Category breadcrumbs
+    prompt: "Return every category's `id` and its full `path` from the top, such as `Coffee > Single origin`. Top-level categories are just their name."
+    starter: SELECT id, name AS path FROM categories
+    solution: |
+      WITH RECURSIVE tree(id, path) AS (
+        SELECT id, name FROM categories WHERE parent_id IS NULL
+        UNION ALL
+        SELECT c.id, t.path || ' > ' || c.name
+        FROM categories AS c JOIN tree AS t ON c.parent_id = t.id
+      )
+      SELECT id, path FROM tree
+    hints:
+      - "Anchor on the categories with no parent."
+  - id: recursive-calendar
+    title: A complete daily report
+    prompt: For every day from 2026-06-01 to 2026-06-14 inclusive, return `day` (as `YYYY-MM-DD`) and the number of orders placed that day that are now cancelled or refunded, as `problems`. Days with none must show 0.
+    starter: |
+      SELECT date(ordered_at) AS day, count(*) AS problems
+      FROM orders
+      WHERE ordered_at >= '2026-06-01' AND ordered_at < '2026-06-15'
+        AND status IN ('cancelled', 'refunded')
+      GROUP BY day
+    solution: |
+      WITH RECURSIVE days(day) AS (
+        SELECT '2026-06-01'
+        UNION ALL
+        SELECT date(day, '+1 day') FROM days WHERE day < '2026-06-14'
+      )
+      SELECT d.day, count(o.id) AS problems
+      FROM days AS d
+      LEFT JOIN orders AS o
+        ON date(o.ordered_at) = d.day AND o.status IN ('cancelled', 'refunded')
+      GROUP BY d.day
+    hints:
+      - "Days without matching orders are missing from the starter's result."
+      - "Generate the 14 days first, then left join the orders."
+dialect_notes:
+  postgres: "Supports `SEARCH DEPTH FIRST BY` and `CYCLE` clauses (14+), and `generate_series()` for numbers and timestamps."
+  mysql: "Recursive CTEs arrived in 8.0; `cte_max_recursion_depth` (default 1000) stops runaway recursion."
+  mssql: "Write `WITH` without `RECURSIVE`. Recursion stops at 100 levels unless you add `OPTION (MAXRECURSION n)`."
+  duckdb: "Has `generate_series()` and `range()`, and `USING KEY` for recursive CTEs that update rows by key."
+references:
+  - title: SQLite recursive CTEs
+    url: https://www.sqlite.org/lang_with.html#recursive_common_table_expressions
+  - title: PostgreSQL recursive queries
+    url: https://www.postgresql.org/docs/current/queries-with.html#QUERIES-WITH-RECURSIVE

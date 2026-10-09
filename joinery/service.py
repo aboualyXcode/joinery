@@ -245,7 +245,37 @@ class Platform:
         response.update(compare(expected, actual, order_matters=exercise.order_matters,
                                 check_names=exercise.check_names))
         response["actual"] = _preview(actual)
+        if response["passed"] and exercise.plan_searched and engine.id == "sqlite":
+            response.update(self._check_plan(exercise, engine, sql))
         return response
+
+    def _check_plan(self, exercise: Exercise, engine: Engine, sql: str) -> dict:
+        """Performance exercises also require that named tables are reached through an index."""
+        statements = statement_texts(sql, engine.dialect)
+        last = statements[-1]
+        batches = [{"id": "setup", "sql": ";\n".join(statements[:-1])}] if len(statements) > 1 else []
+        batches.append({"id": "plan", "sql": last, "split": False, "explain": True})
+        out = self._execute(engine, exercise.dataset, batches)
+        entries = out["batches"][-1]["statements"] if out.get("ok") else []
+        if not entries or entries[0].get("error"):
+            return {"passed": False, "summary": "The result is right, but the query plan could not be checked.",
+                    "details": [], "hint": None}
+        tree, _advice = sqlite_tree(entries[0]["plan"], self.row_counts[exercise.dataset], aliases_for(last))
+        nodes, stack = [], list(tree)
+        while stack:
+            node = stack.pop()
+            nodes.append(node)
+            stack.extend(node["children"])
+        for table in exercise.plan_searched:
+            touching = [n for n in nodes if n["table"] == table]
+            slow = [n for n in touching if n["kind"] != "search"]  # a covering-index SCAN still reads every entry
+            if slow or not touching:
+                return {"passed": False,
+                        "summary": f"The result is right, but the plan still reads {table} without a usable index.",
+                        "details": [n["label"] for n in nodes],
+                        "hint": f"Make sure {table} is reached with SEARCH ... USING INDEX: check the Plan tab."}
+        return {"summary": "Correct, and the plan uses an index as intended.",
+                "plan": [n["label"] for n in nodes]}
 
     def solution(self, exercise_id: str) -> dict:
         exercise = self.exercise(exercise_id)

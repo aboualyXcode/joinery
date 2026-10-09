@@ -1,0 +1,140 @@
+id: schema-design
+title: Designing schemas
+module: changing
+level: intermediate
+minutes: 25
+dataset: shop
+summary: Model entities and relationships with tables and keys, normalize to avoid contradictions, and create tables with sensible types.
+objectives:
+  - Read an entity relationship diagram
+  - Model one-to-many, many-to-many and self-referencing relationships
+  - Explain normalization and when to denormalize on purpose
+  - Write `CREATE TABLE` with keys, defaults and foreign keys
+sections:
+  - title: Entities, keys and relationships
+    body: |
+      Each table models one kind of thing, and each row is identified by a **primary key**. A
+      **foreign key** stores the primary key of a related row:
+
+      - *one-to-many*: one customer has many orders (`orders.customer_id`)
+      - *many-to-many*: orders contain many products and products appear in many orders, so the
+        relationship gets its own table, `order_items`
+      - *self-referencing*: `employees.manager_id` and `categories.parent_id` point into their own table
+
+      Hover over a table in the diagram to highlight its relationships.
+    widget: {type: erd}
+    examples:
+      - id: schema-ddl
+        title: How the tables were created
+        sql: |
+          SELECT name, sql
+          FROM sqlite_schema
+          WHERE type = 'table' AND name NOT LIKE 'sqlite_%'
+          ORDER BY name;
+      - id: schema-foreign-keys
+        title: Foreign keys of order_items
+        sql: |
+          SELECT "from" AS column_name, "table" AS references_table, "to" AS references_column
+          FROM pragma_foreign_key_list('order_items');
+  - title: Normalization
+    body: |
+      **Normalization** stores each fact once. If a customer's country were copied onto every order, a
+      move would require updating many rows, and a missed row would contradict the rest. The usual
+      targets: atomic values in each column (first normal form), and every non-key column depending on
+      the whole key and nothing but the key (second and third normal forms).
+
+      Denormalize **deliberately** when a value is a historical fact rather than a copy.
+      `order_items.unit_price` records what the customer paid, which must not change when the catalogue
+      price changes, as it did for coffee in March 2025.
+    examples:
+      - id: schema-price-history
+        title: Prices paid versus today's prices
+        sql: |
+          SELECT p.name, o.ordered_at, i.unit_price AS paid, p.unit_price AS today
+          FROM order_items AS i
+          JOIN products AS p ON p.id = i.product_id
+          JOIN orders   AS o ON o.id = i.order_id
+          WHERE i.unit_price <> p.unit_price
+          ORDER BY o.ordered_at
+          LIMIT 10;
+        portable: true
+  - title: Creating tables
+    body: |
+      A good table definition states the type of each column, which columns are required, defaults,
+      keys and relationships. Prefer surrogate integer keys for entities and composite keys for pure
+      relationship tables. Name tables and columns in `snake_case`, avoid reserved words, and store
+      timestamps in UTC (or as `timestamptz` in PostgreSQL).
+    examples:
+      - id: schema-create
+        title: A follow-up table for reviews
+        sql: |
+          CREATE TABLE review_responses (
+            id           INTEGER PRIMARY KEY,
+            review_id    INTEGER NOT NULL REFERENCES reviews (id),
+            employee_id  INTEGER NOT NULL REFERENCES employees (id),
+            body         TEXT    NOT NULL,
+            responded_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+          );
+          INSERT INTO review_responses (review_id, employee_id, body)
+          VALUES (1, 20, 'Thanks for the feedback!');
+          SELECT * FROM review_responses;
+        variants:
+          postgres: |
+            CREATE TABLE review_responses (
+              id           integer GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+              review_id    integer NOT NULL REFERENCES reviews (id),
+              employee_id  integer NOT NULL REFERENCES employees (id),
+              body         text NOT NULL,
+              responded_at timestamptz NOT NULL DEFAULT now()
+            );
+exercises:
+  - id: schema-wishlist
+    title: A wishlist table
+    prompt: |
+      Create a table `wishlist_items` with columns `customer_id` (references `customers`), `product_id`
+      (references `products`) and `added_at` (a timestamp that cannot be NULL), in that order, with the
+      primary key `(customer_id, product_id)`. Then add customer 1's wish for product 19 at
+      `2026-07-01 12:00:00`.
+    starter: CREATE TABLE wishlist_items (customer_id INTEGER, product_id INTEGER, added_at TIMESTAMP)
+    solution: |
+      CREATE TABLE wishlist_items (
+        customer_id INTEGER REFERENCES customers (id),
+        product_id  INTEGER REFERENCES products (id),
+        added_at    TIMESTAMP NOT NULL,
+        PRIMARY KEY (customer_id, product_id)
+      );
+      INSERT INTO wishlist_items VALUES (1, 19, '2026-07-01 12:00:00');
+    check:
+      mode: state
+      verify: |
+        SELECT 'column' AS kind, name AS detail, pk AS value FROM pragma_table_info('wishlist_items')
+        UNION ALL
+        SELECT 'foreign key', "from" || ' -> ' || "table", 0 FROM pragma_foreign_key_list('wishlist_items')
+        UNION ALL
+        SELECT 'row', customer_id || ':' || product_id || ':' || added_at, 0 FROM wishlist_items
+    hints:
+      - "A composite key is declared after the columns: `PRIMARY KEY (customer_id, product_id)`."
+      - "Foreign keys can be written inline: `customer_id INTEGER REFERENCES customers (id)`."
+  - id: schema-price-changes
+    title: Sold at a different price
+    prompt: Return `order_id`, `line_no`, the price paid as `paid` and today's catalogue price as `today` for every line item sold at a price different from today's.
+    starter: |
+      SELECT i.order_id, i.line_no, i.unit_price AS paid, p.unit_price AS today
+      FROM order_items AS i JOIN products AS p ON p.id = i.product_id
+      WHERE i.unit_price = p.unit_price
+    solution: |
+      SELECT i.order_id, i.line_no, i.unit_price AS paid, p.unit_price AS today
+      FROM order_items AS i JOIN products AS p ON p.id = i.product_id
+      WHERE i.unit_price <> p.unit_price
+    hints:
+      - "Flip the comparison."
+dialect_notes:
+  postgres: "Use identity columns (`GENERATED ... AS IDENTITY`) rather than `serial`, and `timestamptz` for moments in time."
+  mysql: "Use InnoDB (the default) for foreign keys and transactions. `TEXT` columns cannot be indexed without a prefix length."
+  mssql: "Use `IDENTITY(1,1)` or sequences, `NVARCHAR` for Unicode text and `DATETIME2`/`DATETIMEOFFSET` for time."
+  duckdb: "Supports nested types (`STRUCT`, `LIST`, `MAP`) that suit analytics more than normalized OLTP schemas."
+references:
+  - title: SQLite CREATE TABLE
+    url: https://www.sqlite.org/lang_createtable.html
+  - title: PostgreSQL data definition
+    url: https://www.postgresql.org/docs/current/ddl.html

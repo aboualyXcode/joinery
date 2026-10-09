@@ -128,7 +128,8 @@ def main(argv: list[str] | None = None) -> int:
     doctor = sub.add_parser("doctor", help="check the environment")
     doctor.set_defaults(handler=_doctor)
     args = parser.parse_args(argv)
-    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+    level = logging.WARNING if args.command == "validate" else logging.INFO
+    logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
     return args.handler(args)
 
 

@@ -1,0 +1,125 @@
+id: subqueries
+title: Subqueries and EXISTS
+module: combining
+level: intermediate
+minutes: 25
+dataset: shop
+summary: Nest queries as values, lists and tables; correlate them with the outer row; and avoid the NOT IN NULL trap.
+objectives:
+  - Use scalar subqueries as values
+  - Filter with `IN` and `EXISTS`, and explain why `NOT IN` breaks on NULL
+  - Write correlated subqueries
+  - Use derived tables in `FROM`
+sections:
+  - title: Scalar subqueries
+    body: |
+      A subquery in parentheses that returns **one row and one column** can be used anywhere a value can.
+    examples:
+      - id: sub-above-average
+        title: Products priced above average
+        sql: |
+          SELECT name, unit_price
+          FROM products
+          WHERE unit_price > (SELECT avg(unit_price) FROM products)
+          ORDER BY unit_price;
+        portable: true
+  - title: IN, EXISTS and the NOT IN trap
+    body: |
+      `x IN (subquery)` tests membership. `EXISTS (subquery)` tests whether any row comes back, and the
+      select list inside does not matter, which is why people write `SELECT 1`.
+
+      `NOT IN` has a nasty edge: `x NOT IN (1, NULL)` means `x <> 1 AND x <> NULL`, and `x <> NULL` is
+      unknown, so **no row ever qualifies**. `customers.referred_by` contains NULLs, so the first query
+      below returns zero. `NOT EXISTS` does not have this problem.
+    examples:
+      - id: sub-not-in-trap
+        title: NOT IN versus NOT EXISTS
+        sql: |
+          SELECT
+            (SELECT count(*) FROM customers
+              WHERE id NOT IN (SELECT referred_by FROM customers))            AS not_in,
+            (SELECT count(*) FROM customers AS c
+              WHERE NOT EXISTS (SELECT 1 FROM customers AS r
+                                WHERE r.referred_by = c.id))                  AS not_exists;
+        portable: true
+      - id: sub-reviewers
+        title: Customers who wrote a review
+        sql: |
+          SELECT id, email
+          FROM customers
+          WHERE id IN (SELECT customer_id FROM reviews)
+          ORDER BY id
+          LIMIT 10;
+  - title: Correlated subqueries
+    body: |
+      A **correlated** subquery refers to the outer row, so conceptually it runs once per outer row.
+      Optimizers often rewrite them into joins, but not always; the plan tab shows what happened.
+    examples:
+      - id: sub-last-order
+        title: Each customer's most recent order
+        sql: |
+          SELECT c.id, c.email,
+                 (SELECT max(o.ordered_at) FROM orders AS o WHERE o.customer_id = c.id) AS last_order
+          FROM customers AS c
+          ORDER BY c.id
+          LIMIT 10;
+        mode: plan
+  - title: Derived tables
+    body: |
+      A subquery in `FROM` is a **derived table**: compute an intermediate result, give it an alias, and
+      query it like a table. This is how to aggregate in two stages, for example totals per order and
+      then the average of those totals.
+    examples:
+      - id: sub-derived
+        title: Average order value per channel
+        sql: |
+          SELECT o.channel, round(avg(t.total), 2) AS avg_order_value
+          FROM orders AS o
+          JOIN (SELECT order_id, sum(quantity * unit_price - discount) AS total
+                FROM order_items
+                GROUP BY order_id) AS t ON t.order_id = o.id
+          GROUP BY o.channel;
+        portable: true
+exercises:
+  - id: subqueries-above-category-average
+    title: Pricier than their category
+    prompt: Return the `name`, `category_id` and `unit_price` of products priced above the average price of **their own category**.
+    starter: SELECT name, category_id, unit_price FROM products WHERE unit_price > (SELECT avg(unit_price) FROM products)
+    solution: |
+      SELECT p.name, p.category_id, p.unit_price
+      FROM products AS p
+      WHERE p.unit_price > (SELECT avg(p2.unit_price)
+                            FROM products AS p2
+                            WHERE p2.category_id = p.category_id)
+    hints:
+      - "The starter compares with the average of the whole catalogue."
+      - "Correlate the subquery: `WHERE p2.category_id = p.category_id`."
+  - id: subqueries-referrers
+    title: Customers who referred someone
+    prompt: Return the `id` and `email` of customers who referred at least one other customer.
+    starter: SELECT id, email FROM customers WHERE referred_by IS NOT NULL
+    solution: |
+      SELECT c.id, c.email
+      FROM customers AS c
+      WHERE EXISTS (SELECT 1 FROM customers AS r WHERE r.referred_by = c.id)
+    hints:
+      - "The starter finds people who **were** referred."
+      - "Look for another customer whose `referred_by` is this customer's `id`."
+  - id: subqueries-unreviewed
+    title: Products nobody reviewed
+    prompt: Return the `id` and `name` of every product with no reviews at all.
+    starter: SELECT id, name FROM products WHERE id NOT IN (SELECT product_id FROM reviews WHERE rating < 3)
+    solution: |
+      SELECT p.id, p.name
+      FROM products AS p
+      WHERE NOT EXISTS (SELECT 1 FROM reviews AS r WHERE r.product_id = p.id)
+    hints:
+      - "Any review counts, whatever its rating."
+dialect_notes:
+  postgres: "Rewrites many `EXISTS` and `IN` subqueries into semi and anti joins. `= ANY(array)` and `= ALL` are also available."
+  mysql: "Since 8.0.16 the optimizer turns `EXISTS` into semi joins too; older versions ran correlated subqueries row by row."
+  mssql: "Applies the same semi and anti join rewrites. `CROSS APPLY` covers correlated subqueries that return several columns."
+  duckdb: "Decorrelates arbitrary subqueries, so correlated subqueries are rarely slow."
+references:
+  - title: PostgreSQL subquery expressions
+    url: https://www.postgresql.org/docs/current/functions-subquery.html

@@ -1,0 +1,198 @@
+id: time-series
+title: Time series
+module: analytics
+level: advanced
+minutes: 30
+dataset: analytics
+summary: Bucket events by time, smooth noisy series with moving averages, find gaps, sessionize activity and join on the latest earlier value.
+objectives:
+  - Bucket timestamps by hour, day and week
+  - Compute moving averages with window frames
+  - Detect gaps with `lag`
+  - Sessionize events (gaps and islands) and write as-of joins
+sections:
+  - title: Bucketing time
+    body: |
+      Truncate timestamps to a bucket and group by it. In SQLite, format the timestamp; PostgreSQL and
+      DuckDB use `date_trunc`, SQL Server `DATETRUNC` (2022+) or `DATE_BUCKET`.
+    examples:
+      - id: ts-hourly
+        title: Hourly temperature per sensor
+        sql: |
+          SELECT sensor_id, strftime('%Y-%m-%d %H:00', read_at) AS hour,
+                 round(avg(temperature_c), 2) AS avg_temp, count(*) AS readings
+          FROM sensor_readings
+          WHERE read_at >= '2026-06-03' AND read_at < '2026-06-04'
+          GROUP BY sensor_id, hour
+          ORDER BY sensor_id, hour;
+        variants:
+          postgres: |
+            SELECT sensor_id, date_trunc('hour', read_at) AS hour,
+                   round(avg(temperature_c), 2) AS avg_temp, count(*) AS readings
+            FROM sensor_readings WHERE read_at >= '2026-06-03' AND read_at < '2026-06-04'
+            GROUP BY sensor_id, hour ORDER BY sensor_id, hour;
+          duckdb: |
+            SELECT sensor_id, date_trunc('hour', read_at) AS hour,
+                   round(avg(temperature_c), 2) AS avg_temp, count(*) AS readings
+            FROM sensor_readings WHERE read_at >= '2026-06-03' AND read_at < '2026-06-04'
+            GROUP BY sensor_id, hour ORDER BY sensor_id, hour;
+  - title: Moving averages
+    body: |
+      Daily counts are noisy. A moving average over a frame of rows smooths them:
+      `avg(x) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)` averages each day with the six
+      before it. Fill missing days first (see the recursive queries lesson) or the frame will span more
+      than seven calendar days.
+    examples:
+      - id: ts-moving-average
+        title: Purchases per day with a seven-day average
+        sql: |
+          WITH daily AS (
+            SELECT date(occurred_at) AS day, count(*) AS purchases
+            FROM events
+            WHERE name = 'purchase'
+            GROUP BY day
+          )
+          SELECT day, purchases,
+                 round(avg(purchases) OVER (ORDER BY day ROWS BETWEEN 6 PRECEDING AND CURRENT ROW), 2) AS avg_7d
+          FROM daily
+          ORDER BY day DESC
+          LIMIT 21;
+        portable: true
+  - title: Finding gaps
+    body: |
+      Sensors report every 15 minutes, so a longer distance to the previous reading means data is
+      missing. `lag()` brings the previous timestamp onto each row.
+    examples:
+      - id: ts-gaps
+        title: Gaps longer than 15 minutes
+        sql: |
+          WITH r AS (
+            SELECT sensor_id, read_at,
+                   lag(read_at) OVER (PARTITION BY sensor_id ORDER BY read_at) AS previous
+            FROM sensor_readings
+          )
+          SELECT sensor_id, previous AS last_reading, read_at AS next_reading,
+                 round((julianday(read_at) - julianday(previous)) * 1440) AS minutes
+          FROM r
+          WHERE (julianday(read_at) - julianday(previous)) * 1440 > 16
+          ORDER BY minutes DESC
+          LIMIT 10;
+  - title: Sessionizing activity
+    body: |
+      To split a user's events into sessions, flag each event that starts a new session (the first event,
+      or one more than 30 minutes after the previous), then take a running sum of the flags: every event
+      in the same session gets the same number. This is the *gaps and islands* pattern.
+    examples:
+      - id: ts-sessionize
+        title: Sessions from raw timestamps
+        sql: |
+          WITH flagged AS (
+            SELECT user_id, occurred_at, name,
+                   CASE WHEN lag(occurred_at) OVER w IS NULL
+                          OR (julianday(occurred_at) - julianday(lag(occurred_at) OVER w)) * 1440 > 30
+                        THEN 1 ELSE 0 END AS starts_session
+            FROM events
+            WHERE user_id = 11
+            WINDOW w AS (PARTITION BY user_id ORDER BY occurred_at)
+          ),
+          numbered AS (
+            SELECT *, sum(starts_session) OVER (ORDER BY occurred_at) AS session_no FROM flagged
+          )
+          SELECT session_no, min(occurred_at) AS started, max(occurred_at) AS ended, count(*) AS events
+          FROM numbered
+          GROUP BY session_no
+          ORDER BY session_no;
+  - title: As-of joins
+    body: |
+      Exchange rates are published on weekdays only, so a Saturday transaction has no rate of its own:
+      it needs the **latest rate on or before** its date. A correlated subquery with `ORDER BY ... LIMIT
+      1` expresses this anywhere; DuckDB has a dedicated `ASOF JOIN`.
+    examples:
+      - id: ts-asof
+        title: Weekend transactions converted to dollars
+        dataset: bank
+        sql: |
+          SELECT t.id, t.posted_at, t.amount, a.currency,
+                 (SELECT r.usd_per_unit FROM fx_rates AS r
+                  WHERE r.currency = a.currency AND r.rate_date <= date(t.posted_at)
+                  ORDER BY r.rate_date DESC LIMIT 1) AS usd_per_unit
+          FROM transactions AS t
+          JOIN accounts AS a ON a.id = t.account_id
+          WHERE a.currency = 'EUR' AND strftime('%w', t.posted_at) IN ('0', '6')
+          LIMIT 10;
+        variants:
+          duckdb: |
+            SELECT t.id, t.posted_at, t.amount, a.currency, r.usd_per_unit
+            FROM transactions AS t
+            JOIN accounts AS a ON a.id = t.account_id
+            ASOF JOIN fx_rates AS r ON r.currency = a.currency AND t.posted_at::date >= r.rate_date
+            WHERE a.currency = 'EUR' AND dayofweek(t.posted_at) IN (0, 6)
+            LIMIT 10;
+exercises:
+  - id: timeseries-roastery-profile
+    title: The roastery's daily profile
+    prompt: For sensor `roastery-1` only, return each hour of the day as two-digit text (`hour`, from `00` to `23`) and the average temperature for that hour across all days (`avg_temp`, rounded to 2).
+    starter: |
+      SELECT strftime('%H', read_at) AS hour, round(avg(temperature_c), 2) AS avg_temp
+      FROM sensor_readings GROUP BY hour
+    solution: |
+      SELECT strftime('%H', read_at) AS hour, round(avg(temperature_c), 2) AS avg_temp
+      FROM sensor_readings
+      WHERE sensor_id = 'roastery-1'
+      GROUP BY hour
+    hints:
+      - "The starter mixes all three sensors."
+  - id: timeseries-outages
+    title: Outages longer than an hour
+    prompt: Find every gap of more than one hour between consecutive readings of the same sensor. Return `sensor_id`, `gap_start` (the reading before the gap) and `gap_end` (the reading after it).
+    starter: |
+      WITH r AS (
+        SELECT sensor_id, read_at, lag(read_at) OVER (PARTITION BY sensor_id ORDER BY read_at) AS previous
+        FROM sensor_readings
+      )
+      SELECT sensor_id, previous AS gap_start, read_at AS gap_end
+      FROM r WHERE (julianday(read_at) - julianday(previous)) * 1440 > 15
+    solution: |
+      WITH r AS (
+        SELECT sensor_id, read_at, lag(read_at) OVER (PARTITION BY sensor_id ORDER BY read_at) AS previous
+        FROM sensor_readings
+      )
+      SELECT sensor_id, previous AS gap_start, read_at AS gap_end
+      FROM r WHERE (julianday(read_at) - julianday(previous)) * 24 > 1
+    hints:
+      - "The starter flags every missed reading. Raise the threshold to one hour."
+  - id: timeseries-weekend-balance
+    title: A weekend valuation
+    dataset: bank
+    prompt: |
+      Value each EUR account's balance at the end of Sunday 2026-06-28 in US dollars. Sum the account's
+      transactions posted before `2026-06-29` and multiply by the latest EUR rate on or before
+      `2026-06-28` (there is no weekend rate). Return `account_id` and `usd_balance` rounded to 2.
+    starter: |
+      SELECT a.id AS account_id,
+             round(sum(t.amount) * (SELECT usd_per_unit FROM fx_rates
+                                    WHERE currency = 'EUR' AND rate_date = '2026-06-28'), 2) AS usd_balance
+      FROM accounts AS a JOIN transactions AS t ON t.account_id = a.id
+      WHERE a.currency = 'EUR' AND t.posted_at < '2026-06-29'
+      GROUP BY a.id
+    solution: |
+      SELECT a.id AS account_id,
+             round(sum(t.amount) * (SELECT usd_per_unit FROM fx_rates
+                                    WHERE currency = 'EUR' AND rate_date <= '2026-06-28'
+                                    ORDER BY rate_date DESC LIMIT 1), 2) AS usd_balance
+      FROM accounts AS a JOIN transactions AS t ON t.account_id = a.id
+      WHERE a.currency = 'EUR' AND t.posted_at < '2026-06-29'
+      GROUP BY a.id
+    hints:
+      - "There is no rate dated on a Sunday, so the starter multiplies by NULL."
+      - "Take the latest rate on or before the date: `<=`, `ORDER BY rate_date DESC LIMIT 1`."
+dialect_notes:
+  postgres: "`date_trunc`, `generate_series` for calendars, `interval` arithmetic and the TimescaleDB extension for large time series."
+  mysql: "Bucket with `DATE_FORMAT` or integer division on `UNIX_TIMESTAMP`; generate calendars with recursive CTEs."
+  mssql: "`DATE_BUCKET` and `DATETRUNC` (2022+) bucket time; `GENERATE_SERIES` builds calendars."
+  duckdb: "`time_bucket`, `ASOF JOIN` and `generate_series` make time series concise."
+references:
+  - title: SQLite window frames
+    url: https://www.sqlite.org/windowfunctions.html#frame_specifications
+  - title: DuckDB AsOf joins
+    url: https://duckdb.org/docs/stable/guides/sql_features/asof_join

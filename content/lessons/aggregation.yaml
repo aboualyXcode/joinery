@@ -1,0 +1,147 @@
+id: aggregation
+title: Aggregating with GROUP BY and HAVING
+module: foundations
+level: beginner
+minutes: 25
+dataset: shop
+summary: Summarize many rows into one with aggregate functions, one row per group with GROUP BY, and filter groups with HAVING.
+objectives:
+  - Use `count`, `sum`, `avg`, `min` and `max`, and know how each treats NULL
+  - Group rows with `GROUP BY`
+  - Filter groups with `HAVING` and explain how it differs from `WHERE`
+  - Count conditionally with `FILTER` or `CASE`
+sections:
+  - title: Aggregate functions
+    body: |
+      An aggregate turns many rows into one value. `count(*)` counts rows; `count(column)` counts
+      non-NULL values; `count(DISTINCT column)` counts different non-NULL values. `sum`, `avg`, `min` and
+      `max` also ignore NULLs.
+    examples:
+      - id: agg-product-stats
+        title: The catalogue in one row
+        sql: |
+          SELECT count(*)                  AS products,
+                 count(weight_grams)       AS with_weight,
+                 count(DISTINCT category_id) AS categories,
+                 min(unit_price)           AS cheapest,
+                 max(unit_price)           AS dearest,
+                 round(avg(unit_price), 2) AS average_price
+          FROM products;
+        portable: true
+  - title: One row per group
+    body: |
+      `GROUP BY` splits the rows into groups that share the same values, and aggregates then run once
+      per group. Every selected column must either be grouped or aggregated. PostgreSQL enforces this;
+      SQLite and MySQL (without `ONLY_FULL_GROUP_BY`) quietly pick a value from some row, which hides bugs.
+
+      Logically, grouping happens **after** `WHERE` and **before** `SELECT`. Use the processing-order
+      view below, or the **Step through** button, to watch it happen.
+    examples:
+      - id: agg-status-counts
+        title: Orders per status
+        sql: |
+          SELECT status, count(*) AS orders
+          FROM orders
+          GROUP BY status
+          ORDER BY orders DESC;
+        portable: true
+        mode: steps
+    widget: {type: processing-order}
+  - title: HAVING filters groups
+    body: |
+      `WHERE` filters rows before grouping, so it cannot see aggregates. `HAVING` filters the groups
+      afterwards. Put conditions on plain columns in `WHERE`, because removing rows early makes grouping
+      cheaper.
+    examples:
+      - id: agg-loyal-customers
+        title: Customers with ten or more orders
+        sql: |
+          SELECT customer_id, count(*) AS orders
+          FROM orders
+          WHERE status <> 'cancelled'
+          GROUP BY customer_id
+          HAVING count(*) >= 10
+          ORDER BY orders DESC;
+        portable: true
+        mode: steps
+  - title: Conditional aggregation
+    body: |
+      To count several categories in one pass, aggregate a condition. The standard `FILTER (WHERE ...)`
+      clause is supported by SQLite, PostgreSQL and DuckDB; `sum(CASE WHEN ... THEN 1 ELSE 0 END)` works
+      everywhere.
+    examples:
+      - id: agg-channel-outcomes
+        title: Outcomes per channel
+        sql: |
+          SELECT channel,
+                 count(*) AS orders,
+                 count(*) FILTER (WHERE status = 'refunded')  AS refunded,
+                 sum(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
+          FROM orders
+          GROUP BY channel;
+        variants:
+          postgres: |
+            SELECT channel, count(*) AS orders,
+                   count(*) FILTER (WHERE status = 'refunded') AS refunded,
+                   sum(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
+            FROM orders GROUP BY channel;
+          duckdb: |
+            SELECT channel, count(*) AS orders,
+                   count(*) FILTER (WHERE status = 'refunded') AS refunded,
+                   sum(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
+            FROM orders GROUP BY channel;
+          mysql: |
+            SELECT channel, count(*) AS orders,
+                   sum(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded,
+                   sum(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
+            FROM orders GROUP BY channel;
+          mssql: |
+            SELECT channel, count(*) AS orders,
+                   sum(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded,
+                   sum(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) AS cancelled
+            FROM orders GROUP BY channel;
+exercises:
+  - id: aggregation-status-counts
+    title: Orders per status
+    prompt: How many orders are there in each status? Return `status` and `orders`.
+    starter: SELECT status, count(*) AS orders FROM orders
+    solution: SELECT status, count(*) AS orders FROM orders GROUP BY status
+    hints:
+      - "Without `GROUP BY`, `count(*)` collapses the whole table into one row."
+  - id: aggregation-best-sellers
+    title: Best sellers
+    prompt: Return `product_id` and the total quantity sold as `units`, only for products that sold at least 100 units.
+    starter: SELECT product_id, sum(quantity) AS units FROM order_items GROUP BY product_id
+    solution: SELECT product_id, sum(quantity) AS units FROM order_items GROUP BY product_id HAVING sum(quantity) >= 100
+    hints:
+      - "The condition is on an aggregate, so it belongs in `HAVING`."
+  - id: aggregation-refund-rate
+    title: Refund rate per channel
+    prompt: For each `channel`, return the number of `orders`, the number `refunded`, and `refund_pct`, the refunded share as a percentage rounded to one decimal place.
+    starter: |
+      SELECT channel,
+             count(*) AS orders,
+             sum(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded,
+             100 * sum(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) / count(*) AS refund_pct
+      FROM orders
+      GROUP BY channel
+    solution: |
+      SELECT channel,
+             count(*) AS orders,
+             sum(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) AS refunded,
+             round(100.0 * sum(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) / count(*), 1) AS refund_pct
+      FROM orders
+      GROUP BY channel
+    hints:
+      - "The starter divides two integers."
+      - "Multiply by `100.0`, then `round(..., 1)`."
+dialect_notes:
+  postgres: "Rejects selecting ungrouped columns. `percentile_cont`, `mode()` and `string_agg` are available; PostgreSQL 16 added `any_value()`."
+  mysql: "With `ONLY_FULL_GROUP_BY` (the default since 5.7) ungrouped columns are rejected. No `FILTER` clause."
+  mssql: "No `FILTER` clause; use `CASE` inside the aggregate. `STRING_AGG(x, ',') WITHIN GROUP (ORDER BY ...)` concatenates."
+  duckdb: "`GROUP BY ALL` groups by every non-aggregated column, and `count_if`, `median` and `quantile` are built in."
+references:
+  - title: SQLite aggregate functions
+    url: https://www.sqlite.org/lang_aggfunc.html
+  - title: PostgreSQL aggregate functions
+    url: https://www.postgresql.org/docs/current/functions-aggregate.html

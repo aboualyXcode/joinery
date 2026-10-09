@@ -1,0 +1,136 @@
+id: indexes
+title: Indexes
+module: changing
+level: intermediate
+minutes: 30
+dataset: shop
+summary: See how B-tree indexes turn scans into searches, design composite and covering indexes, and recognize when an index cannot help.
+objectives:
+  - Explain what a B-tree index stores and why lookups are fast
+  - Read SCAN versus SEARCH in a query plan
+  - Order composite index columns using the leftmost-prefix rule
+  - Use covering, expression and partial indexes
+sections:
+  - title: What an index is
+    body: |
+      A table is stored in primary key order, so finding the orders of one customer means reading every
+      order. An **index** is a separate, sorted copy of some columns plus a pointer back to each row,
+      kept in a balanced tree (a B-tree). Finding a value takes a handful of page reads, however large
+      the table grows.
+
+      Indexes are not free: every insert, update and delete must maintain them, and they take space.
+      Index for the queries you actually run.
+
+      In the lab below, choose a query and the columns of a candidate index. Joinery creates the index
+      in your private copy and runs the plan and the query both ways.
+    widget: {type: index-lab}
+  - title: SCAN versus SEARCH
+    body: |
+      `orders.customer_id` deliberately has no index. Compare the plans: `SCAN orders` reads every row,
+      while `SEARCH orders USING INDEX` jumps to the matching ones. The **work** figure counts SQLite
+      virtual machine steps.
+    examples:
+      - id: index-before
+        title: No index on customer_id
+        sql: |
+          SELECT id, ordered_at, status
+          FROM orders
+          WHERE customer_id = 11;
+        mode: plan
+      - id: index-after
+        title: With an index
+        setup: CREATE INDEX idx_orders_customer ON orders (customer_id);
+        sql: |
+          SELECT id, ordered_at, status
+          FROM orders
+          WHERE customer_id = 11;
+        mode: plan
+  - title: Composite indexes and the leftmost prefix
+    body: |
+      An index on `(status, ordered_at)` is sorted by status, then by date within each status, like a
+      phone book sorted by surname and then first name. It serves `status = ?` and
+      `status = ? AND ordered_at >= ?`, and can return one status already sorted by date. It cannot
+      jump straight to a date range across all statuses, just as the phone book cannot find everyone
+      called Ana. Put equality columns first and range or sort columns last.
+    examples:
+      - id: index-composite-good
+        title: Equality, then range
+        setup: CREATE INDEX idx_orders_status_date ON orders (status, ordered_at);
+        sql: |
+          SELECT id, ordered_at
+          FROM orders
+          WHERE status = 'refunded' AND ordered_at >= '2026-01-01'
+          ORDER BY ordered_at;
+        mode: plan
+      - id: index-composite-skip
+        title: The leading column is missing
+        setup: CREATE INDEX idx_orders_status_date ON orders (status, ordered_at);
+        sql: |
+          SELECT id FROM orders WHERE channel = 'web' AND shipping_country = 'GB';
+        mode: plan
+  - title: Covering, expression and partial indexes
+    body: |
+      If an index contains every column a query needs, the database never visits the table: a
+      **covering index**. An **expression index** indexes a computed value, such as `lower(email)`, so
+      a predicate on that expression can use it. A **partial index** (`WHERE status = 'pending'`) indexes
+      only the rows you search for, which keeps it small.
+
+      Indexes do not help when most rows match anyway, when a column is wrapped in a function that the
+      index does not cover, or with a leading wildcard such as `LIKE '%son'`.
+    examples:
+      - id: index-covering
+        title: A covering index
+        setup: CREATE INDEX idx_items_product_qty ON order_items (product_id, quantity);
+        sql: |
+          SELECT product_id, sum(quantity) AS units
+          FROM order_items
+          WHERE product_id BETWEEN 1 AND 5
+          GROUP BY product_id;
+        mode: plan
+      - id: index-expression
+        title: Indexing lower(email)
+        setup: CREATE INDEX idx_customers_email_lower ON customers (lower(email));
+        sql: |
+          SELECT id, email FROM customers WHERE lower(email) = 'priya.okafor42@example.com';
+        mode: plan
+exercises:
+  - id: indexes-reviews-by-customer
+    title: Index for a lookup
+    prompt: "This query scans the whole reviews table: `SELECT * FROM reviews WHERE customer_id = 5`. Create an index that lets it search instead."
+    starter: CREATE INDEX idx_reviews_rating ON reviews (rating)
+    solution: CREATE INDEX idx_reviews_customer ON reviews (customer_id)
+    check:
+      mode: state
+      verify: |
+        SELECT count(*) AS usable_indexes
+        FROM pragma_index_list('reviews') AS il
+        JOIN pragma_index_info(il.name) AS ii
+        WHERE ii.seqno = 0 AND ii.name = 'customer_id'
+    hints:
+      - "The index's first column must be the one in the `WHERE` clause."
+  - id: indexes-composite-order
+    title: Column order matters
+    prompt: Create one index on `orders` that serves `WHERE status = ? AND ordered_at >= ?` and returns one status sorted by `ordered_at`.
+    starter: CREATE INDEX idx_orders_date_status ON orders (ordered_at, status)
+    solution: CREATE INDEX idx_orders_status_date ON orders (status, ordered_at)
+    check:
+      mode: state
+      verify: |
+        SELECT string_agg(ii.name, ',' ORDER BY ii.seqno) AS index_columns
+        FROM pragma_index_list('orders') AS il
+        JOIN pragma_index_info(il.name) AS ii
+        WHERE il.origin = 'c'
+        GROUP BY il.name
+        HAVING index_columns = 'status,ordered_at'
+    hints:
+      - "Equality columns first, then the range or sort column."
+dialect_notes:
+  postgres: "Offers B-tree, hash, GIN (arrays, JSONB, full text), GiST, BRIN and more. `CREATE INDEX CONCURRENTLY` avoids blocking writes; `INCLUDE (...)` adds covering columns."
+  mysql: "InnoDB tables are clustered on the primary key, and secondary indexes store the primary key as their row pointer. Functional indexes arrived in 8.0.13."
+  mssql: "Distinguishes clustered and nonclustered indexes, supports `INCLUDE` columns and filtered (partial) indexes, and offers columnstore for analytics."
+  duckdb: "Uses min-max zone maps automatically and ART indexes for constraints; explicit indexes help mostly for point lookups."
+references:
+  - title: SQLite query planning
+    url: https://www.sqlite.org/queryplanner.html
+  - title: Use The Index, Luke
+    url: https://use-the-index-luke.com/

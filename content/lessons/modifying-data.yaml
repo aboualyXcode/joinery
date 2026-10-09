@@ -1,0 +1,155 @@
+id: modifying-data
+title: Inserting, updating and deleting
+module: changing
+level: beginner
+minutes: 25
+dataset: shop
+summary: Change data with INSERT, UPDATE and DELETE, see what changed with RETURNING, and write upserts for every engine.
+objectives:
+  - Insert single rows, many rows and query results
+  - Update and delete with a precise `WHERE`
+  - Return changed rows with `RETURNING` (or `OUTPUT`)
+  - Write an upsert with `ON CONFLICT`, `ON DUPLICATE KEY` or `MERGE`
+sections:
+  - title: INSERT
+    body: |
+      Always name the columns you insert into: the statement keeps working when columns are added, and
+      omitted columns get their `DEFAULT` (or NULL). An `INTEGER PRIMARY KEY` in SQLite, an identity
+      column in PostgreSQL and SQL Server, or `AUTO_INCREMENT` in MySQL assigns the id for you.
+
+      `RETURNING` hands back the inserted rows, including generated ids, in the same round trip.
+    examples:
+      - id: dml-insert
+        title: A new customer
+        sql: |
+          INSERT INTO customers (email, first_name, last_name, city, country, signed_up_at)
+          VALUES ('mira.hollis@example.com', 'Mira', 'Hollis', 'Leeds', 'GB', '2026-07-01 09:00:00')
+          RETURNING id, email, marketing_opt_in;
+        variants:
+          postgres: |
+            INSERT INTO customers (email, first_name, last_name, city, country, signed_up_at)
+            VALUES ('mira.hollis@example.com', 'Mira', 'Hollis', 'Leeds', 'GB', '2026-07-01 09:00:00')
+            RETURNING id, email, marketing_opt_in;
+          duckdb: |
+            INSERT INTO customers (email, first_name, last_name, city, country, signed_up_at)
+            VALUES ('mira.hollis@example.com', 'Mira', 'Hollis', 'Leeds', 'GB', '2026-07-01 09:00:00')
+            RETURNING id, email, marketing_opt_in;
+          mssql: |
+            INSERT INTO customers (email, first_name, last_name, city, country, signed_up_at)
+            OUTPUT inserted.id, inserted.email, inserted.marketing_opt_in
+            VALUES ('mira.hollis@example.com', 'Mira', 'Hollis', 'Leeds', 'GB', '2026-07-01 09:00:00');
+          mysql: |
+            INSERT INTO customers (email, first_name, last_name, city, country, signed_up_at)
+            VALUES ('mira.hollis@example.com', 'Mira', 'Hollis', 'Leeds', 'GB', '2026-07-01 09:00:00');
+            SELECT id, email, marketing_opt_in FROM customers WHERE id = LAST_INSERT_ID();
+      - id: dml-insert-select
+        title: Insert the result of a query
+        sql: |
+          CREATE TEMP TABLE vip_customers (customer_id INTEGER, orders INTEGER);
+          INSERT INTO vip_customers (customer_id, orders)
+          SELECT customer_id, count(*) FROM orders GROUP BY customer_id HAVING count(*) >= 8;
+          SELECT * FROM vip_customers ORDER BY orders DESC;
+  - title: UPDATE and DELETE
+    body: |
+      `UPDATE` and `DELETE` change **every** row that matches the `WHERE` clause, and every row if there
+      is no `WHERE`. Before running one for real, run a `SELECT` with the same condition. The **Step
+      through** button does exactly that: it shows the rows that will be touched, then the result.
+    examples:
+      - id: dml-update
+        title: Raise tea prices by 5%
+        sql: |
+          UPDATE products
+          SET unit_price = round(unit_price * 1.05, 2)
+          WHERE category_id IN (8, 9, 10)
+          RETURNING name, unit_price;
+        mode: steps
+      - id: dml-delete
+        title: Remove empty one-star reviews
+        sql: |
+          DELETE FROM reviews
+          WHERE rating = 1 AND body IS NULL
+          RETURNING id, product_id;
+        mode: steps
+  - title: Upserts
+    body: |
+      An **upsert** inserts a row, or updates it if a row with the same key already exists. Every engine
+      spells it differently:
+
+      - SQLite, PostgreSQL and DuckDB: `INSERT ... ON CONFLICT (key) DO UPDATE SET col = excluded.col`
+      - MySQL: `INSERT ... AS new ON DUPLICATE KEY UPDATE col = new.col`
+      - SQL Server (and PostgreSQL 15+, DuckDB 1.4+): `MERGE INTO target USING source ON ...`
+
+      Upserts rely on a unique constraint or primary key to detect the conflict.
+    examples:
+      - id: dml-upsert
+        title: Receive stock for product 1
+        sql: |
+          INSERT INTO inventory (product_id, warehouse, on_hand, reorder_level, updated_at)
+          VALUES (1, 'Rotterdam', 50, 30, '2026-07-01 08:00:00')
+          ON CONFLICT (product_id) DO UPDATE
+            SET on_hand    = inventory.on_hand + excluded.on_hand,
+                updated_at = excluded.updated_at
+          RETURNING product_id, on_hand, updated_at;
+        variants:
+          postgres: |
+            INSERT INTO inventory (product_id, warehouse, on_hand, reorder_level, updated_at)
+            VALUES (1, 'Rotterdam', 50, 30, '2026-07-01 08:00:00')
+            ON CONFLICT (product_id) DO UPDATE
+              SET on_hand = inventory.on_hand + EXCLUDED.on_hand, updated_at = EXCLUDED.updated_at
+            RETURNING product_id, on_hand, updated_at;
+          mysql: |
+            INSERT INTO inventory (product_id, warehouse, on_hand, reorder_level, updated_at)
+            VALUES (1, 'Rotterdam', 50, 30, '2026-07-01 08:00:00') AS new
+            ON DUPLICATE KEY UPDATE on_hand = inventory.on_hand + new.on_hand, updated_at = new.updated_at;
+          mssql: |
+            MERGE INTO inventory AS target
+            USING (VALUES (1, N'Rotterdam', 50, 30, CAST('2026-07-01 08:00:00' AS DATETIME2(0))))
+                  AS source (product_id, warehouse, on_hand, reorder_level, updated_at)
+            ON target.product_id = source.product_id
+            WHEN MATCHED THEN UPDATE SET on_hand = target.on_hand + source.on_hand, updated_at = source.updated_at
+            WHEN NOT MATCHED THEN INSERT (product_id, warehouse, on_hand, reorder_level, updated_at)
+                 VALUES (source.product_id, source.warehouse, source.on_hand, source.reorder_level, source.updated_at)
+            OUTPUT inserted.product_id, inserted.on_hand, inserted.updated_at;
+exercises:
+  - id: modifying-new-category
+    title: A new subcategory
+    prompt: Add a category called `Cold brew` as a subcategory of `Coffee` (category id 1).
+    starter: INSERT INTO categories (name) VALUES ('Cold brew')
+    solution: INSERT INTO categories (name, parent_id) VALUES ('Cold brew', 1)
+    check: {mode: state, verify: "SELECT id, name, parent_id FROM categories ORDER BY id"}
+    hints:
+      - "Subcategories point at their parent through `parent_id`."
+  - id: modifying-retire-herbal
+    title: Retire the herbal range
+    prompt: Mark every product in the Herbal category (`category_id` 10) as inactive. Leave other products alone.
+    starter: UPDATE products SET is_active = FALSE
+    solution: UPDATE products SET is_active = FALSE WHERE category_id = 10
+    check: {mode: state, verify: "SELECT id, is_active FROM products ORDER BY id"}
+    hints:
+      - "Without a `WHERE` clause, `UPDATE` changes every row."
+  - id: modifying-upsert-stock
+    title: Receive stock with an upsert
+    prompt: Receive 25 units of product 2. Write an `INSERT` for `(2, 'Rotterdam', 25, 30, '2026-07-01 10:00:00')` into `inventory (product_id, warehouse, on_hand, reorder_level, updated_at)` that, when the product already has a row, adds 25 to `on_hand` and sets `updated_at`.
+    starter: |
+      INSERT INTO inventory (product_id, warehouse, on_hand, reorder_level, updated_at)
+      VALUES (2, 'Rotterdam', 25, 30, '2026-07-01 10:00:00')
+    solution: |
+      INSERT INTO inventory (product_id, warehouse, on_hand, reorder_level, updated_at)
+      VALUES (2, 'Rotterdam', 25, 30, '2026-07-01 10:00:00')
+      ON CONFLICT (product_id) DO UPDATE
+        SET on_hand = inventory.on_hand + excluded.on_hand,
+            updated_at = excluded.updated_at
+    check: {mode: state, verify: "SELECT product_id, on_hand, updated_at FROM inventory ORDER BY product_id"}
+    hints:
+      - "The starter fails because product 2 already has a row."
+      - "Add `ON CONFLICT (product_id) DO UPDATE SET ...` and use `excluded` for the new values."
+dialect_notes:
+  postgres: "`RETURNING` works on INSERT, UPDATE, DELETE and MERGE (17+); PostgreSQL 18 can return `old` and `new` values."
+  mysql: "No `RETURNING`. `ON DUPLICATE KEY UPDATE` fires on any unique key; the `VALUES()` function is deprecated in favour of a row alias."
+  mssql: "`OUTPUT inserted.*, deleted.*` returns changed rows. `MERGE` should be paired with appropriate locking (for example `HOLDLOCK`) under concurrency."
+  duckdb: "Supports `ON CONFLICT`, `INSERT OR REPLACE`, `RETURNING` and, since 1.4, `MERGE INTO`."
+references:
+  - title: SQLite UPSERT
+    url: https://www.sqlite.org/lang_upsert.html
+  - title: PostgreSQL INSERT ON CONFLICT
+    url: https://www.postgresql.org/docs/current/sql-insert.html

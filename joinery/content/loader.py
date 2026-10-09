@@ -67,11 +67,12 @@ class Exercise:
     check_names: bool
     verify: str | None
     hints: list[str]
+    plan_searched: list[str] = field(default_factory=list)
 
     def public(self) -> dict:
         return {"id": self.id, "title": self.title, "prompt_html": self.prompt_html, "dataset": self.dataset,
                 "starter": self.starter, "mode": self.mode, "order_matters": self.order_matters,
-                "hints": [render_inline(h) for h in self.hints]}
+                "plan_check": bool(self.plan_searched), "hints": [render_inline(h) for h in self.hints]}
 
 
 @dataclass
@@ -176,9 +177,14 @@ def _lesson(path: Path, module_id: str, datasets: set[str], exercises: dict, exa
             ex_id, lesson_id, _require(item, "title", str, ewhere), render(_require(item, "prompt", str, ewhere)),
             ex_dataset, str(item.get("starter", "")).strip(), _require(item, "solution", str, ewhere).strip(),
             mode, bool(check.get("order_matters", False)), bool(check.get("check_names", False)),
-            check.get("verify"), [str(h) for h in item.get("hints", []) or []])
+            check.get("verify"), [str(h) for h in item.get("hints", []) or []],
+            [str(t) for t in (check.get("plan") or {}).get("searched", [])])
         exercises[ex_id] = exercise
         public_exercises.append(exercise.public())
+    for key in ("objectives",):
+        for item in raw.get(key, []) or []:
+            if not isinstance(item, str):
+                raise ContentError(f"{where}: every entry in '{key}' must be text (quote entries containing ': ')")
     notes = raw.get("dialect_notes") or {}
     for engine in notes:
         if engine not in ENGINES:

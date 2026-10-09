@@ -1,0 +1,136 @@
+id: select-basics
+title: Selecting columns and computing values
+module: foundations
+level: beginner
+minutes: 15
+dataset: shop
+summary: Read columns from a table, compute new values with expressions, rename them with aliases and remove duplicates.
+objectives:
+  - Write a `SELECT ... FROM ...` query
+  - Compute values with arithmetic and string expressions
+  - Name output columns with `AS`
+  - Remove duplicate rows with `DISTINCT`
+sections:
+  - title: Your first query
+    body: |
+      A relational database stores data in **tables**: named sets of rows that all share the same columns.
+      `SELECT` lists the columns you want and `FROM` names the table to read.
+
+      The examples in this course use the Copperleaf shop, a fictional online tea and coffee retailer.
+      Press **Run** on any example, change it, and run it again. Every run uses a private copy of the
+      data, so you cannot break anything.
+    examples:
+      - id: select-product-columns
+        title: Name and price of every product
+        sql: |
+          SELECT name, unit_price
+          FROM products;
+        portable: true
+  - title: Expressions and aliases
+    body: |
+      The select list can hold any **expression**, not just column names. Arithmetic works as you would
+      expect, and `AS` gives the result a readable name (an *alias*). Without an alias, the database
+      invents a name such as `unit_price - cost`.
+
+      Strings are joined with the standard `||` operator. MySQL is the odd one out: there `||` means
+      logical OR unless the `PIPES_AS_CONCAT` mode is on, so use `CONCAT()` instead.
+    examples:
+      - id: select-margin
+        title: Margin per product
+        sql: |
+          SELECT name,
+                 unit_price,
+                 cost,
+                 unit_price - cost AS margin,
+                 round((unit_price - cost) / unit_price * 100, 1) AS margin_pct
+          FROM products;
+        portable: true
+      - id: select-full-name
+        title: Building a full name
+        sql: |
+          SELECT first_name || ' ' || last_name AS full_name, email
+          FROM customers;
+        variants:
+          mysql: |
+            SELECT CONCAT(first_name, ' ', last_name) AS full_name, email
+            FROM customers;
+          mssql: |
+            SELECT CONCAT(first_name, ' ', last_name) AS full_name, email
+            FROM customers;
+          postgres: |
+            SELECT first_name || ' ' || last_name AS full_name, email
+            FROM customers;
+          duckdb: |
+            SELECT first_name || ' ' || last_name AS full_name, email
+            FROM customers;
+  - title: Peeking at a table
+    body: |
+      `SELECT *` returns every column. It is handy for exploring, but production code should list its
+      columns: a query that depends on column order breaks when someone adds a column, and fetching
+      columns you do not need wastes I/O and network.
+
+      To look at just a few rows, add `LIMIT`. SQL Server spells it `TOP` (or the standard
+      `OFFSET ... FETCH`), which you will meet in the sorting lesson.
+    examples:
+      - id: select-star-limit
+        title: The first five customers
+        sql: |
+          SELECT *
+          FROM customers
+          LIMIT 5;
+        variants:
+          mssql: |
+            SELECT TOP (5) *
+            FROM customers;
+          postgres: |
+            SELECT * FROM customers LIMIT 5;
+          mysql: |
+            SELECT * FROM customers LIMIT 5;
+          duckdb: |
+            SELECT * FROM customers LIMIT 5;
+  - title: Removing duplicates
+    body: |
+      `SELECT DISTINCT` removes duplicate **rows** from the result. It applies to the whole row, not to
+      the first column: `SELECT DISTINCT country, city` keeps one row per country and city pair.
+    examples:
+      - id: select-distinct-countries
+        title: Countries our customers live in
+        sql: |
+          SELECT DISTINCT country
+          FROM customers
+          ORDER BY country;
+        portable: true
+exercises:
+  - id: select-product-prices
+    title: The price list
+    prompt: List the `sku`, `name` and `unit_price` of every product.
+    starter: SELECT * FROM products
+    solution: SELECT sku, name, unit_price FROM products
+    hints:
+      - "`SELECT *` returns every column. Name the three you need instead."
+  - id: select-margin-column
+    title: Margin per unit
+    prompt: For each product, show its `name` and its margin per unit (`unit_price - cost`) in a column called `margin`.
+    starter: SELECT name, unit_price FROM products
+    solution: SELECT name, unit_price - cost AS margin FROM products
+    check: {check_names: true}
+    hints:
+      - "Subtract one column from another right in the select list."
+      - "Rename the expression with `AS margin`."
+  - id: select-shipping-countries
+    title: Where we ship
+    prompt: Which countries have orders been shipped to? Return each `shipping_country` once.
+    starter: SELECT shipping_country FROM orders
+    solution: SELECT DISTINCT shipping_country FROM orders
+    hints:
+      - "Each order repeats its country. Which keyword removes duplicate rows?"
+dialect_notes:
+  mysql: "Use `CONCAT(a, b)` to join strings. `||` is logical OR unless `PIPES_AS_CONCAT` is enabled."
+  mssql: "There is no `LIMIT`: use `SELECT TOP (n)` or `ORDER BY ... OFFSET 0 ROWS FETCH NEXT n ROWS ONLY`. `+` and, from SQL Server 2025, `||` concatenate strings."
+  postgres: "`||` concatenates strings. If either side is NULL the result is NULL; `concat()` treats NULL as an empty string."
+  duckdb: "DuckDB adds conveniences such as `SELECT * EXCLUDE (col)` and `SELECT * REPLACE (expr AS col)`."
+references:
+  - title: SQLite SELECT
+    url: https://www.sqlite.org/lang_select.html
+  - title: PostgreSQL queries tutorial
+    url: https://www.postgresql.org/docs/current/tutorial-select.html

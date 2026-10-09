@@ -1,0 +1,82 @@
+id: set-operations
+title: Set operations
+module: combining
+level: intermediate
+minutes: 15
+dataset: shop
+summary: Stack, intersect and subtract result sets with UNION, INTERSECT and EXCEPT, and know their rules.
+objectives:
+  - Combine results with `UNION` and `UNION ALL`
+  - Find overlaps and differences with `INTERSECT` and `EXCEPT`
+  - Line up columns correctly
+sections:
+  - title: UNION and UNION ALL
+    body: |
+      `UNION ALL` stacks the rows of two queries. `UNION` does the same and then removes duplicates,
+      which costs a sort or hash, so use `UNION ALL` unless you need de-duplication. Both queries must
+      return the same number of columns with compatible types; the names come from the first query, and
+      a final `ORDER BY` sorts the whole result.
+    examples:
+      - id: set-union-all
+        title: One directory of teams and players
+        dataset: joinlab
+        sql: |
+          SELECT name, 'team' AS kind FROM teams
+          UNION ALL
+          SELECT name, 'player' FROM players
+          ORDER BY kind, name;
+        portable: true
+        expect: {rows: 11}
+        mode: steps
+  - title: INTERSECT and EXCEPT
+    body: |
+      `INTERSECT` keeps rows present in both results and `EXCEPT` keeps rows from the first that are
+      missing from the second (Oracle calls it `MINUS`). Both remove duplicates. They are a compact way to
+      ask questions such as "who bought last year but not this year?".
+    examples:
+      - id: set-retained
+        title: Customers who ordered in both 2025 and 2026
+        sql: |
+          SELECT customer_id FROM orders WHERE ordered_at >= '2025-01-01' AND ordered_at < '2026-01-01'
+          INTERSECT
+          SELECT customer_id FROM orders WHERE ordered_at >= '2026-01-01';
+        portable: true
+      - id: set-same-with-exists
+        title: The same question with EXISTS
+        sql: |
+          SELECT DISTINCT o.customer_id
+          FROM orders AS o
+          WHERE o.ordered_at >= '2025-01-01' AND o.ordered_at < '2026-01-01'
+            AND EXISTS (SELECT 1 FROM orders AS n
+                        WHERE n.customer_id = o.customer_id AND n.ordered_at >= '2026-01-01');
+        portable: true
+exercises:
+  - id: set-ops-lapsed
+    title: Lapsed customers
+    prompt: Return the `customer_id` of every customer who ordered in 2025 but has not ordered in 2026.
+    starter: SELECT customer_id FROM orders WHERE ordered_at >= '2025-01-01' AND ordered_at < '2026-01-01'
+    solution: |
+      SELECT customer_id FROM orders WHERE ordered_at >= '2025-01-01' AND ordered_at < '2026-01-01'
+      EXCEPT
+      SELECT customer_id FROM orders WHERE ordered_at >= '2026-01-01'
+    hints:
+      - "Subtract the 2026 customers from the 2025 customers."
+  - id: set-ops-directory
+    title: A combined directory
+    dataset: joinlab
+    prompt: Return one list containing every team name and every player name, with a second column `kind` that says `team` or `player`. Name the first column `name`.
+    starter: SELECT name, 'team' AS kind FROM teams
+    solution: |
+      SELECT name, 'team' AS kind FROM teams
+      UNION ALL
+      SELECT name, 'player' FROM players
+    hints:
+      - "Stack a second query with `UNION ALL`."
+dialect_notes:
+  mysql: "`INTERSECT` and `EXCEPT` arrived in MySQL 8.0.31."
+  postgres: "Supports `INTERSECT ALL` and `EXCEPT ALL`, which keep duplicates."
+  mssql: "Supports `INTERSECT` and `EXCEPT` but not their `ALL` forms."
+  duckdb: "Adds `UNION BY NAME`, which matches columns by name instead of position."
+references:
+  - title: PostgreSQL combining queries
+    url: https://www.postgresql.org/docs/current/queries-union.html

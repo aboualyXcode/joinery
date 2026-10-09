@@ -1,0 +1,171 @@
+id: analytics-patterns
+title: Funnels, experiments, cohorts and pivots
+module: analytics
+level: advanced
+minutes: 30
+dataset: analytics
+summary: Answer product questions with conversion funnels, A/B test comparisons, cohort retention tables, pivots and percentiles.
+objectives:
+  - Build a conversion funnel with distinct counts
+  - Compare experiment variants fairly
+  - Build a cohort retention table
+  - Pivot rows into columns and compute quantiles
+sections:
+  - title: Conversion funnels
+    body: |
+      A funnel counts how many **distinct users** reach each step. Count users, not events: one person
+      adding three items to a cart is still one person who added to cart. Divide each step by the first
+      to get the conversion rate.
+    examples:
+      - id: funnel-steps
+        title: Signup to purchase
+        sql: |
+          WITH steps AS (
+            SELECT name, count(DISTINCT user_id) AS users,
+                   CASE name WHEN 'signup' THEN 1 WHEN 'page_view' THEN 2 WHEN 'add_to_cart' THEN 3
+                             WHEN 'checkout_start' THEN 4 WHEN 'purchase' THEN 5 END AS step
+            FROM events
+            WHERE name IN ('signup', 'page_view', 'add_to_cart', 'checkout_start', 'purchase')
+            GROUP BY name
+          )
+          SELECT step, name, users,
+                 round(100.0 * users / first_value(users) OVER (ORDER BY step), 1) AS pct_of_signups
+          FROM steps
+          ORDER BY step;
+        expect: {rows: 5}
+        portable: true
+  - title: Comparing experiment variants
+    body: |
+      Users who signed up after March were randomly assigned to `control` or `treatment` in the
+      `checkout_v2` experiment. Compare the share of users who **started** checkout and then purchased.
+      A real analysis would also test statistical significance; with a few hundred users per arm, small
+      differences may be noise.
+    examples:
+      - id: ab-test
+        title: Checkout conversion per variant
+        sql: |
+          SELECT x.variant,
+                 count(DISTINCT x.user_id) AS users,
+                 count(DISTINCT CASE WHEN e.name = 'checkout_start' THEN e.user_id END) AS started,
+                 count(DISTINCT CASE WHEN e.name = 'purchase' THEN e.user_id END) AS purchased,
+                 round(100.0 * count(DISTINCT CASE WHEN e.name = 'purchase' THEN e.user_id END)
+                       / count(DISTINCT CASE WHEN e.name = 'checkout_start' THEN e.user_id END), 1) AS checkout_conversion
+          FROM experiments AS x
+          LEFT JOIN events AS e ON e.user_id = x.user_id
+          WHERE x.experiment = 'checkout_v2'
+          GROUP BY x.variant;
+        portable: true
+  - title: Cohort retention
+    body: |
+      A **cohort** groups users by when they signed up. Retention asks: of the users who joined in a
+      month, how many were active one, two, three months later? Compute each event's month offset from
+      the user's signup month, then count distinct users per cohort and offset.
+    examples:
+      - id: cohorts
+        title: Monthly cohorts
+        sql: |
+          WITH activity AS (
+            SELECT u.id AS user_id,
+                   strftime('%Y-%m', u.signed_up_at) AS cohort,
+                   (CAST(strftime('%Y', e.occurred_at) AS INTEGER) * 12 + CAST(strftime('%m', e.occurred_at) AS INTEGER))
+                 - (CAST(strftime('%Y', u.signed_up_at) AS INTEGER) * 12 + CAST(strftime('%m', u.signed_up_at) AS INTEGER))
+                   AS month_offset
+            FROM users AS u
+            JOIN events AS e ON e.user_id = u.id
+          )
+          SELECT cohort,
+                 count(DISTINCT CASE WHEN month_offset = 0 THEN user_id END) AS m0,
+                 count(DISTINCT CASE WHEN month_offset = 1 THEN user_id END) AS m1,
+                 count(DISTINCT CASE WHEN month_offset = 2 THEN user_id END) AS m2,
+                 count(DISTINCT CASE WHEN month_offset = 3 THEN user_id END) AS m3
+          FROM activity
+          GROUP BY cohort
+          ORDER BY cohort;
+  - title: Pivots and quantiles
+    body: |
+      Conditional aggregation **pivots** values into columns: one `sum(CASE ...)` per output column.
+      SQL Server, DuckDB and others also have a `PIVOT` operator.
+
+      SQLite has no percentile function, but `ntile(4)` splits ordered rows into quartiles, and the
+      boundaries of each tile approximate the quartile values.
+    examples:
+      - id: pivot-platform
+        title: Events per platform as columns
+        sql: |
+          SELECT e.name,
+                 sum(CASE WHEN u.platform = 'web' THEN 1 ELSE 0 END)     AS web,
+                 sum(CASE WHEN u.platform = 'ios' THEN 1 ELSE 0 END)     AS ios,
+                 sum(CASE WHEN u.platform = 'android' THEN 1 ELSE 0 END) AS android
+          FROM events AS e
+          JOIN users AS u ON u.id = e.user_id
+          GROUP BY e.name
+          ORDER BY e.name;
+        portable: true
+      - id: quartiles
+        title: Order value quartiles
+        sql: |
+          WITH values_ AS (
+            SELECT properties ->> '$.order_value' AS order_value,
+                   ntile(4) OVER (ORDER BY properties ->> '$.order_value') AS quartile
+            FROM events
+            WHERE name = 'purchase'
+          )
+          SELECT quartile, count(*) AS purchases, min(order_value) AS lowest, max(order_value) AS highest
+          FROM values_
+          GROUP BY quartile
+          ORDER BY quartile;
+exercises:
+  - id: analytics-experiment-funnel
+    title: Users, not events
+    prompt: For users in the `checkout_v2` experiment, return each `variant`, the number of distinct users who started checkout (`users_started`) and the number who purchased (`users_purchased`).
+    starter: |
+      SELECT x.variant,
+             count(CASE WHEN e.name = 'checkout_start' THEN 1 END) AS users_started,
+             count(CASE WHEN e.name = 'purchase' THEN 1 END) AS users_purchased
+      FROM experiments AS x LEFT JOIN events AS e ON e.user_id = x.user_id
+      GROUP BY x.variant
+    solution: |
+      SELECT x.variant,
+             count(DISTINCT CASE WHEN e.name = 'checkout_start' THEN e.user_id END) AS users_started,
+             count(DISTINCT CASE WHEN e.name = 'purchase' THEN e.user_id END) AS users_purchased
+      FROM experiments AS x LEFT JOIN events AS e ON e.user_id = x.user_id
+      GROUP BY x.variant
+    hints:
+      - "The starter counts events. Count distinct `user_id` values instead."
+  - id: analytics-platform-pivot
+    title: Pivot by platform
+    prompt: Return one row per event `name` with three columns, `web`, `ios` and `android`, holding the number of events from users on that platform.
+    starter: |
+      SELECT e.name, u.platform, count(*) AS events
+      FROM events AS e JOIN users AS u ON u.id = e.user_id
+      GROUP BY e.name, u.platform
+    solution: |
+      SELECT e.name,
+             sum(CASE WHEN u.platform = 'web' THEN 1 ELSE 0 END) AS web,
+             sum(CASE WHEN u.platform = 'ios' THEN 1 ELSE 0 END) AS ios,
+             sum(CASE WHEN u.platform = 'android' THEN 1 ELSE 0 END) AS android
+      FROM events AS e JOIN users AS u ON u.id = e.user_id
+      GROUP BY e.name
+    hints:
+      - "One `sum(CASE WHEN ... THEN 1 ELSE 0 END)` per platform."
+  - id: analytics-weekly-active
+    title: Weekly active users in June
+    prompt: For events in June 2026, return each `week` (`strftime('%Y-%W', occurred_at)`) and its number of distinct active users as `active_users`.
+    starter: |
+      SELECT strftime('%Y-%W', occurred_at) AS week, count(*) AS active_users
+      FROM events WHERE occurred_at >= '2026-06-01' AND occurred_at < '2026-07-01'
+      GROUP BY week
+    solution: |
+      SELECT strftime('%Y-%W', occurred_at) AS week, count(DISTINCT user_id) AS active_users
+      FROM events WHERE occurred_at >= '2026-06-01' AND occurred_at < '2026-07-01'
+      GROUP BY week
+    hints:
+      - "Active users, not events."
+dialect_notes:
+  postgres: "`percentile_cont(0.5) WITHIN GROUP (ORDER BY x)` computes exact medians; `FILTER` keeps conditional aggregates short."
+  mysql: "No percentile functions; use window functions. Use `CASE` instead of `FILTER`."
+  mssql: "`PERCENTILE_CONT` is a window function there, and `PIVOT`/`UNPIVOT` operators exist. SQL Server 2022 added `APPROX_PERCENTILE_CONT`."
+  duckdb: "`PIVOT`/`UNPIVOT`, `median`, `quantile_cont` and `approx_quantile` are built in."
+references:
+  - title: SQLite built-in window functions
+    url: https://www.sqlite.org/windowfunctions.html#built_in_window_functions

@@ -1,0 +1,157 @@
+id: data-types
+title: Data types, dates and text
+module: foundations
+level: beginner
+minutes: 25
+dataset: shop
+summary: Understand how engines type values, avoid integer division, and work with dates, times and strings.
+objectives:
+  - Explain SQLite type affinity and how it differs from strict typing
+  - Avoid integer division and cast deliberately
+  - Extract parts of dates and compute durations
+  - Clean up text with string functions
+sections:
+  - title: Types and affinity
+    body: |
+      Most databases are **strictly typed**: a `numeric(10,2)` column only holds numbers with two
+      decimals. SQLite is different: a column's declared type is only an *affinity*, a preferred storage
+      class, and each value carries its own type. A price of `34.0` is stored as the integer `34` while
+      `16.5` stays a real number. `typeof()` shows the storage class.
+
+      SQLite 3.37 added `STRICT` tables, which reject values of the wrong type like other engines do.
+      Money is best stored as an exact decimal (`numeric`/`decimal`) or as integer cents, never as a
+      binary float, because `0.1 + 0.2` is not exactly `0.3`.
+    examples:
+      - id: types-typeof
+        title: Storage classes in one column
+        sql: |
+          SELECT name, unit_price, typeof(unit_price) AS storage_class
+          FROM products
+          LIMIT 8;
+      - id: types-float-surprise
+        title: Binary floating point
+        sql: |
+          SELECT 0.1 + 0.2 AS sum_of_floats, 0.1 + 0.2 = 0.3 AS equals_point_three;
+  - title: Integer division and CAST
+    body: |
+      When both operands are integers, `/` performs **integer division** in SQLite, PostgreSQL and SQL
+      Server: `7 / 2` is `3`. MySQL and DuckDB return `3.5`. Make the intent explicit by multiplying by
+      `1.0` or casting one operand.
+    examples:
+      - id: types-integer-division
+        title: Lines per order, wrong and right
+        sql: |
+          SELECT count(*) / count(DISTINCT order_id)       AS truncated,
+                 count(*) * 1.0 / count(DISTINCT order_id) AS lines_per_order
+          FROM order_items;
+        portable: true
+  - title: Dates and times
+    body: |
+      SQLite has no date type: Joinery stores dates as ISO 8601 text such as `2026-03-14 09:30:00`,
+      which sorts correctly as text. Date functions parse it:
+
+      - `date(t)` and `datetime(t)` normalize, and accept modifiers such as `'+7 days'` or `'start of month'`.
+      - `strftime('%Y-%m', t)` formats; `%Y` year, `%m` month, `%d` day, `%H` hour, `%w` weekday.
+      - `julianday(b) - julianday(a)` is the number of days between two moments.
+
+      Other engines have real date types and interval arithmetic; the dialect tabs show each style.
+    examples:
+      - id: types-delivery-time
+        title: How long deliveries took
+        sql: |
+          SELECT id,
+                 ordered_at,
+                 delivered_at,
+                 round(julianday(delivered_at) - julianday(ordered_at), 1) AS days
+          FROM orders
+          WHERE status = 'delivered'
+          LIMIT 10;
+        variants:
+          postgres: |
+            SELECT id, ordered_at, delivered_at,
+                   round(EXTRACT(EPOCH FROM delivered_at - ordered_at) / 86400, 1) AS days
+            FROM orders WHERE status = 'delivered' LIMIT 10;
+          mysql: |
+            SELECT id, ordered_at, delivered_at,
+                   round(TIMESTAMPDIFF(SECOND, ordered_at, delivered_at) / 86400, 1) AS days
+            FROM orders WHERE status = 'delivered' LIMIT 10;
+          mssql: |
+            SELECT TOP (10) id, ordered_at, delivered_at,
+                   round(DATEDIFF(second, ordered_at, delivered_at) / 86400.0, 1) AS days
+            FROM orders WHERE status = 'delivered';
+          duckdb: |
+            SELECT id, ordered_at, delivered_at,
+                   round(epoch(delivered_at - ordered_at) / 86400, 1) AS days
+            FROM orders WHERE status = 'delivered' LIMIT 10;
+      - id: types-month-label
+        title: Month labels
+        sql: |
+          SELECT id, ordered_at,
+                 strftime('%Y-%m', ordered_at)          AS month,
+                 date(ordered_at, 'start of month')     AS month_start
+          FROM orders
+          LIMIT 5;
+        variants:
+          postgres: |
+            SELECT id, ordered_at, to_char(ordered_at, 'YYYY-MM') AS month,
+                   date_trunc('month', ordered_at)::date AS month_start
+            FROM orders LIMIT 5;
+          mysql: |
+            SELECT id, ordered_at, DATE_FORMAT(ordered_at, '%Y-%m') AS month,
+                   DATE_FORMAT(ordered_at, '%Y-%m-01') AS month_start
+            FROM orders LIMIT 5;
+          mssql: |
+            SELECT TOP (5) id, ordered_at, FORMAT(ordered_at, 'yyyy-MM') AS month,
+                   DATETRUNC(month, ordered_at) AS month_start
+            FROM orders;
+          duckdb: |
+            SELECT id, ordered_at, strftime(ordered_at, '%Y-%m') AS month,
+                   date_trunc('month', ordered_at) AS month_start
+            FROM orders LIMIT 5;
+  - title: Working with text
+    body: |
+      Common string functions are similar everywhere, with different spellings: `upper`, `lower`,
+      `trim`, `replace`, `length` (SQL Server: `len`), and `substr` (SQL Server and MySQL also use
+      `substring`). SQLite's `LIKE` ignores case for ASCII letters.
+    examples:
+      - id: types-text
+        title: Email domains
+        sql: |
+          SELECT email,
+                 substr(email, instr(email, '@') + 1) AS domain,
+                 upper(country)                       AS country
+          FROM customers
+          LIMIT 5;
+exercises:
+  - id: types-delivery-days
+    title: Whole days to deliver
+    prompt: For delivered orders, return `id` and the number of **whole** days between `ordered_at` and `delivered_at`, rounded down, as `days`.
+    starter: SELECT id, julianday(delivered_at) - julianday(ordered_at) AS days FROM orders WHERE status = 'delivered'
+    solution: SELECT id, CAST(julianday(delivered_at) - julianday(ordered_at) AS INTEGER) AS days FROM orders WHERE status = 'delivered'
+    hints:
+      - "The starter returns fractions of a day."
+      - "`CAST(x AS INTEGER)` drops the fractional part."
+  - id: types-order-month
+    title: Month labels for 2026
+    prompt: For orders placed in 2026, return `id` and the order month as text in the form `YYYY-MM` (for example `2026-03`), called `month`.
+    starter: SELECT id, substr(ordered_at, 1, 4) AS month FROM orders WHERE ordered_at >= '2026-01-01'
+    solution: SELECT id, strftime('%Y-%m', ordered_at) AS month FROM orders WHERE ordered_at >= '2026-01-01'
+    hints:
+      - "`strftime('%Y-%m', ordered_at)` formats a timestamp."
+  - id: types-average-lines
+    title: Avoiding integer division
+    prompt: Compute the average number of line items per order as a decimal value (one row, one column).
+    starter: SELECT count(*) / count(DISTINCT order_id) AS avg_lines FROM order_items
+    solution: SELECT count(*) * 1.0 / count(DISTINCT order_id) AS avg_lines FROM order_items
+    hints:
+      - "Both counts are integers, so `/` truncates."
+dialect_notes:
+  postgres: "Use `numeric(p,s)` for money, `timestamptz` for moments in time, and interval arithmetic such as `now() - interval '7 days'`."
+  mysql: "`DATETIME` has no time zone; `TIMESTAMP` converts to UTC. `/` always returns a decimal; `DIV` is integer division."
+  mssql: "Use `DATETIME2` and `DATETIMEOFFSET`; `DATEADD`, `DATEDIFF` and `DATETRUNC` (2022+) handle arithmetic."
+  duckdb: "`/` is float division and `//` is integer division. `date_trunc`, `date_diff` and intervals work as in PostgreSQL."
+references:
+  - title: Datatypes in SQLite
+    url: https://www.sqlite.org/datatype3.html
+  - title: SQLite date and time functions
+    url: https://www.sqlite.org/lang_datefunc.html

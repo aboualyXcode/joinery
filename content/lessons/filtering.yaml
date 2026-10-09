@@ -1,0 +1,118 @@
+id: filtering
+title: Filtering rows with WHERE
+module: foundations
+level: beginner
+minutes: 20
+dataset: shop
+summary: Keep only the rows you need with comparisons, AND/OR logic, IN, LIKE and date ranges, and learn why NULL needs IS NULL.
+objectives:
+  - Filter rows with `WHERE` and comparison operators
+  - Combine conditions with `AND`, `OR` and parentheses
+  - Use `IN`, `LIKE` and half-open date ranges
+  - Handle `NULL` with three-valued logic
+sections:
+  - title: WHERE keeps matching rows
+    body: |
+      `WHERE` takes a condition and keeps the rows for which it is **true**. Text values go in single
+      quotes. Double quotes are for identifiers (column and table names), so `status = "cancelled"`
+      looks for a column called cancelled.
+    examples:
+      - id: filter-cancelled
+        title: Cancelled orders
+        sql: |
+          SELECT id, ordered_at, status
+          FROM orders
+          WHERE status = 'cancelled';
+        portable: true
+        mode: steps
+  - title: Combining conditions
+    body: |
+      `AND` binds tighter than `OR`, exactly like multiplication binds tighter than addition. When you
+      mix them, add parentheses so the query says what you mean.
+
+      `IN (...)` is shorthand for several equality tests joined by `OR`. `LIKE` matches patterns:
+      `%` stands for any run of characters and `_` for exactly one.
+
+      For dates and timestamps prefer **half-open ranges**: `>=` the start and `<` the day after the end.
+      `BETWEEN '2025-12-01' AND '2025-12-31'` silently misses anything later than midnight on the 31st.
+    examples:
+      - id: filter-mobile-problems
+        title: Mobile orders that went wrong
+        sql: |
+          SELECT id, channel, status
+          FROM orders
+          WHERE channel = 'mobile'
+            AND status IN ('cancelled', 'refunded');
+        portable: true
+      - id: filter-december
+        title: Orders placed in December 2025
+        sql: |
+          SELECT id, ordered_at
+          FROM orders
+          WHERE ordered_at >= '2025-12-01'
+            AND ordered_at <  '2026-01-01';
+        portable: true
+      - id: filter-like
+        title: Anything espresso
+        sql: |
+          SELECT name
+          FROM products
+          WHERE name LIKE '%Espresso%';
+        portable: true
+  - title: NULL means unknown
+    body: |
+      `NULL` marks a missing or unknown value. Any comparison with NULL, including `NULL = NULL`, is
+      neither true nor false but **unknown**, and `WHERE` only keeps rows where the condition is true.
+      That is SQL's *three-valued logic*.
+
+      To test for missing values use `IS NULL` and `IS NOT NULL`. To substitute a value use
+      `coalesce(value, fallback)`, which returns its first non-NULL argument.
+    examples:
+      - id: filter-null-trap
+        title: "= NULL never matches"
+        sql: |
+          SELECT
+            (SELECT count(*) FROM customers WHERE city = NULL)  AS equals_null,
+            (SELECT count(*) FROM customers WHERE city IS NULL) AS is_null;
+        portable: true
+      - id: filter-coalesce
+        title: Filling in missing cities
+        sql: |
+          SELECT email, coalesce(city, 'Unknown') AS city
+          FROM customers
+          WHERE city IS NULL;
+        portable: true
+exercises:
+  - id: filtering-december-orders
+    title: December orders
+    prompt: Find every order placed in December 2025, at any time of day. Return `id` and `ordered_at`.
+    starter: SELECT id, ordered_at FROM orders WHERE ordered_at >= '2025-12-01'
+    solution: SELECT id, ordered_at FROM orders WHERE ordered_at >= '2025-12-01' AND ordered_at < '2026-01-01'
+    hints:
+      - "The starter has no upper bound."
+      - "Use a half-open range: `< '2026-01-01'` includes every moment of 31 December."
+  - id: filtering-missing-city
+    title: Customers without a city
+    prompt: Which customers have no city on record? Return `id` and `email`.
+    starter: SELECT id, email FROM customers WHERE city = NULL
+    solution: SELECT id, email FROM customers WHERE city IS NULL
+    hints:
+      - "Comparing with `= NULL` is never true."
+  - id: filtering-mobile-cancelled-or-refunded
+    title: Operator precedence
+    prompt: List mobile orders that were cancelled **or** refunded. Return `id` and `status`. The starter has a precedence bug.
+    starter: SELECT id, status FROM orders WHERE channel = 'mobile' AND status = 'cancelled' OR status = 'refunded'
+    solution: SELECT id, status FROM orders WHERE channel = 'mobile' AND status IN ('cancelled', 'refunded')
+    hints:
+      - "`AND` is evaluated before `OR`, so the starter returns refunded orders from every channel."
+      - "Add parentheses around the OR, or use `IN`."
+dialect_notes:
+  postgres: "Comparisons are case-sensitive; use `ILIKE` for case-insensitive patterns. `IS DISTINCT FROM` compares values treating NULLs as equal."
+  mysql: "Most default collations compare text case-insensitively, so `'a' = 'A'` is true. `<=>` is a NULL-safe equality operator."
+  mssql: "Case sensitivity depends on the collation; the default is case-insensitive. SQL Server 2022 added `IS [NOT] DISTINCT FROM`."
+  duckdb: "`ILIKE` matches case-insensitively and `GLOB` and `regexp_matches()` cover richer patterns."
+references:
+  - title: SQLite NULL handling notes
+    url: https://www.sqlite.org/nulls.html
+  - title: PostgreSQL comparison operators
+    url: https://www.postgresql.org/docs/current/functions-comparison.html

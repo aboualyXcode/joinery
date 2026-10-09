@@ -1,0 +1,120 @@
+id: sorting-and-paging
+title: Sorting and paging
+module: foundations
+level: beginner
+minutes: 15
+dataset: shop
+summary: Sort results with ORDER BY and tie-breakers, control where NULLs go, and page through results with OFFSET or keysets.
+objectives:
+  - Sort by several columns in either direction
+  - Make sorts deterministic with tie-breakers
+  - Page with `LIMIT`/`OFFSET` and know why keyset pagination scales better
+sections:
+  - title: ORDER BY
+    body: |
+      Without `ORDER BY` a database may return rows in **any** order, and the order can change between
+      runs, versions or plans. If order matters, ask for it.
+
+      Sort by several expressions by listing them; each takes `ASC` (the default) or `DESC`. When the
+      first key ties, the next key decides. End with a unique column (often the primary key) to make
+      the order fully deterministic.
+    examples:
+      - id: sort-by-price
+        title: Most expensive first, then by name
+        sql: |
+          SELECT name, unit_price
+          FROM products
+          ORDER BY unit_price DESC, name;
+        portable: true
+  - title: Where do NULLs go?
+    body: |
+      Databases disagree on where NULLs sort. SQLite, MySQL and SQL Server put them first in ascending
+      order; PostgreSQL and DuckDB put them last. The standard `NULLS FIRST` / `NULLS LAST` makes it
+      explicit, but MySQL and SQL Server do not support it, so sort by a NULL test first.
+    examples:
+      - id: sort-nulls-last
+        title: Lightest products first, gift cards (no weight) last
+        sql: |
+          SELECT name, weight_grams
+          FROM products
+          ORDER BY weight_grams NULLS LAST, name;
+        variants:
+          postgres: |
+            SELECT name, weight_grams FROM products ORDER BY weight_grams NULLS LAST, name;
+          duckdb: |
+            SELECT name, weight_grams FROM products ORDER BY weight_grams NULLS LAST, name;
+          mysql: |
+            SELECT name, weight_grams FROM products ORDER BY weight_grams IS NULL, weight_grams, name;
+          mssql: |
+            SELECT name, weight_grams FROM products
+            ORDER BY CASE WHEN weight_grams IS NULL THEN 1 ELSE 0 END, weight_grams, name;
+  - title: Paging through results
+    body: |
+      `LIMIT n OFFSET k` skips `k` rows and returns the next `n`. It is simple, but the database still
+      has to produce and throw away all `k` skipped rows, so deep pages get slower, and rows inserted
+      between requests shift the pages.
+
+      **Keyset pagination** remembers where the last page ended and asks for rows after it. With an
+      index on the sort key, every page costs the same.
+    examples:
+      - id: page-offset
+        title: Page 3 with OFFSET
+        sql: |
+          SELECT id, ordered_at
+          FROM orders
+          ORDER BY id
+          LIMIT 10 OFFSET 20;
+        variants:
+          mssql: |
+            SELECT id, ordered_at FROM orders
+            ORDER BY id
+            OFFSET 20 ROWS FETCH NEXT 10 ROWS ONLY;
+          postgres: |
+            SELECT id, ordered_at FROM orders ORDER BY id LIMIT 10 OFFSET 20;
+          mysql: |
+            SELECT id, ordered_at FROM orders ORDER BY id LIMIT 10 OFFSET 20;
+          duckdb: |
+            SELECT id, ordered_at FROM orders ORDER BY id LIMIT 10 OFFSET 20;
+      - id: page-keyset
+        title: The next page after id 30, keyset style
+        sql: |
+          SELECT id, ordered_at
+          FROM orders
+          WHERE id > 30
+          ORDER BY id
+          LIMIT 10;
+        variants:
+          mssql: |
+            SELECT TOP (10) id, ordered_at FROM orders WHERE id > 30 ORDER BY id;
+          postgres: |
+            SELECT id, ordered_at FROM orders WHERE id > 30 ORDER BY id LIMIT 10;
+          mysql: |
+            SELECT id, ordered_at FROM orders WHERE id > 30 ORDER BY id LIMIT 10;
+          duckdb: |
+            SELECT id, ordered_at FROM orders WHERE id > 30 ORDER BY id LIMIT 10;
+exercises:
+  - id: sorting-most-expensive
+    title: Top five products
+    prompt: Show the `name` and `unit_price` of the five most expensive **active** products, most expensive first.
+    starter: SELECT name, unit_price FROM products ORDER BY unit_price LIMIT 5
+    solution: SELECT name, unit_price FROM products WHERE is_active ORDER BY unit_price DESC, name LIMIT 5
+    check: {order_matters: true}
+    hints:
+      - "`ORDER BY` is ascending unless you add `DESC`."
+      - "Filter with `WHERE is_active` before limiting."
+  - id: sorting-second-page
+    title: Page two of the order history
+    prompt: Pages hold 10 orders, newest first (by `ordered_at`, then `id` descending). Show page **two**, returning `id` and `ordered_at`.
+    starter: SELECT id, ordered_at FROM orders ORDER BY ordered_at DESC, id DESC LIMIT 10
+    solution: SELECT id, ordered_at FROM orders ORDER BY ordered_at DESC, id DESC LIMIT 10 OFFSET 10
+    check: {order_matters: true}
+    hints:
+      - "Page two skips the first ten rows."
+dialect_notes:
+  mssql: "`TOP (n)` or `OFFSET k ROWS FETCH NEXT n ROWS ONLY`. `OFFSET ... FETCH` requires an `ORDER BY`."
+  postgres: "Supports both `LIMIT/OFFSET` and the standard `FETCH FIRST n ROWS ONLY`, including `WITH TIES`."
+  mysql: "`LIMIT k, n` is shorthand for `LIMIT n OFFSET k`: note the reversed order."
+  duckdb: "Also supports `ORDER BY ALL` to sort by every column from left to right."
+references:
+  - title: Use The Index, Luke - paging through results
+    url: https://use-the-index-luke.com/sql/partial-results/fetch-next-page

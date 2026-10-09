@@ -1,0 +1,137 @@
+id: json
+title: Working with JSON
+module: analytics
+level: intermediate
+minutes: 25
+dataset: analytics
+summary: Extract, filter, aggregate, expand and build JSON values, and decide when JSON belongs in a relational schema.
+objectives:
+  - Extract values with `->>` and `json_extract`
+  - Filter and group by JSON fields
+  - Expand JSON arrays into rows and build JSON from rows
+  - Index JSON fields and know when columns are the better choice
+sections:
+  - title: JSON in a relational database
+    body: |
+      JSON columns suit data whose shape varies, such as event properties: a search has a `query`, a
+      purchase has an `order_value`. Values you filter, join or aggregate on all the time deserve real
+      columns, which are typed, indexed and validated more easily.
+
+      The SQL standard (SQL:2016, with a JSON type in SQL:2023) defines `JSON_VALUE` and friends; each
+      engine also has its own operators. In SQLite, `->>` returns an SQL value and `->` returns JSON.
+    examples:
+      - id: json-extract
+        title: Search queries
+        sql: |
+          SELECT id, occurred_at, properties ->> '$.query' AS query, properties ->> '$.results' AS results
+          FROM events
+          WHERE name = 'search'
+          LIMIT 10;
+        variants:
+          postgres: |
+            SELECT id, occurred_at, properties ->> 'query' AS query, (properties ->> 'results')::int AS results
+            FROM events WHERE name = 'search' LIMIT 10;
+          mysql: |
+            SELECT id, occurred_at, properties ->> '$.query' AS query, properties ->> '$.results' AS results
+            FROM events WHERE name = 'search' LIMIT 10;
+          mssql: |
+            SELECT TOP (10) id, occurred_at, JSON_VALUE(properties, '$.query') AS query,
+                   JSON_VALUE(properties, '$.results') AS results
+            FROM events WHERE name = 'search';
+          duckdb: |
+            SELECT id, occurred_at, properties ->> '$.query' AS query, properties ->> '$.results' AS results
+            FROM events WHERE name = 'search' LIMIT 10;
+  - title: Filtering and grouping on JSON fields
+    body: |
+      Extracted values behave like any other expression, so they can be filtered, grouped and joined.
+      Campaign attribution joins the `utm_campaign` property to the campaigns table.
+    examples:
+      - id: json-top-queries
+        title: Most common searches
+        sql: |
+          SELECT properties ->> '$.query' AS query, count(*) AS searches,
+                 sum(properties ->> '$.results' = 0) AS with_no_results
+          FROM events
+          WHERE name = 'search'
+          GROUP BY query
+          ORDER BY searches DESC;
+      - id: json-campaigns
+        title: Sessions and spend per campaign
+        sql: |
+          SELECT c.name, c.channel, c.budget,
+                 count(DISTINCT e.session_id) AS sessions,
+                 round(c.budget / count(DISTINCT e.session_id), 2) AS cost_per_session
+          FROM campaigns AS c
+          JOIN events AS e ON e.properties ->> '$.utm_campaign' = c.name
+          GROUP BY c.id
+          ORDER BY sessions DESC;
+  - title: Expanding and building JSON
+    body: |
+      `json_each(value)` turns a JSON array or object into rows: a table-valued function you join to.
+      Going the other way, `json_object()` and `json_group_array()` build JSON from rows, handy for
+      returning nested data to an API in one query.
+    examples:
+      - id: json-each
+        title: Expanding an array
+        sql: |
+          SELECT j.key AS position, j.value AS sku
+          FROM json_each('["CF-ETH-250", "TE-MAT-030", "AC-FIL-100"]') AS j;
+        expect: {rows: 3}
+      - id: json-build
+        title: Each buyer's purchases as a JSON array
+        sql: |
+          SELECT user_id,
+                 json_group_array(json_object('at', occurred_at,
+                                              'value', properties ->> '$.order_value')) AS purchases
+          FROM events
+          WHERE name = 'purchase'
+          GROUP BY user_id
+          HAVING count(*) > 1
+          LIMIT 5;
+  - title: Indexing JSON
+    body: |
+      An expression index on the extracted value makes lookups fast in SQLite, MySQL (functional
+      indexes) and SQL Server (on a computed column). PostgreSQL's `jsonb` supports GIN indexes that
+      serve containment queries such as `properties @> '{"utm_campaign": "spring-sale"}'`.
+    examples:
+      - id: json-index
+        title: An expression index on a JSON field
+        setup: CREATE INDEX idx_events_campaign ON events (properties ->> '$.utm_campaign');
+        sql: |
+          SELECT count(*) FROM events WHERE properties ->> '$.utm_campaign' = 'spring-sale';
+        mode: plan
+exercises:
+  - id: json-cart-units
+    title: Units added to cart
+    prompt: From `add_to_cart` events, return each `sku` and the total `units` added, summing the `quantity` property.
+    starter: |
+      SELECT properties ->> '$.sku' AS sku, count(*) AS units
+      FROM events WHERE name = 'add_to_cart' GROUP BY sku
+    solution: |
+      SELECT properties ->> '$.sku' AS sku, sum(properties ->> '$.quantity') AS units
+      FROM events WHERE name = 'add_to_cart' GROUP BY sku
+    hints:
+      - "Some events add two units at once."
+  - id: json-campaign-sessions
+    title: Sessions per campaign
+    prompt: Return each `campaign` (the `utm_campaign` property) and its number of distinct `sessions`. Ignore events without a campaign.
+    starter: |
+      SELECT properties ->> '$.utm_campaign' AS campaign, count(*) AS sessions
+      FROM events GROUP BY campaign
+    solution: |
+      SELECT properties ->> '$.utm_campaign' AS campaign, count(DISTINCT session_id) AS sessions
+      FROM events
+      WHERE properties ->> '$.utm_campaign' IS NOT NULL
+      GROUP BY campaign
+    hints:
+      - "Filter out the NULL campaign and count distinct `session_id` values."
+dialect_notes:
+  postgres: "Prefer `jsonb`: `->`, `->>`, `#>>`, containment `@>`, SQL/JSON path functions and `JSON_TABLE` (17+)."
+  mysql: "Native `JSON` type with `->`/`->>` and `JSON_TABLE`. Index via generated columns or functional indexes."
+  mssql: "`JSON_VALUE`, `JSON_QUERY`, `OPENJSON` and `FOR JSON`; SQL Server 2025 adds a native `json` type and JSON indexes."
+  duckdb: "The JSON extension offers `->`/`->>`, `json_extract` and fast `read_json`; DuckDB 1.5 adds the `VARIANT` type."
+references:
+  - title: SQLite JSON functions
+    url: https://www.sqlite.org/json1.html
+  - title: PostgreSQL JSON functions
+    url: https://www.postgresql.org/docs/current/functions-json.html
