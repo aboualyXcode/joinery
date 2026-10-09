@@ -43,7 +43,8 @@ class CurriculumTests(unittest.TestCase):
                     self.assertIn(cell["level"], ("yes", "partial", "no"))
 
     def test_widgets_used_by_lessons(self):
-        widgets = {s["widget"]["type"] for l in self.content.lessons.values() for s in l["sections"] if s["widget"]}
+        widgets = {section["widget"]["type"] for lesson in self.content.lessons.values()
+                   for section in lesson["sections"] if section["widget"]}
         self.assertEqual(widgets, {"join-visualizer", "isolation-simulator", "index-lab", "query-journey",
                                    "processing-order", "erd"})
 

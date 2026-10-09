@@ -215,9 +215,10 @@ def sqlite_tree(rows: list[list], table_rows: dict[str, int],
                 advice.append({"severity": "warn", "message": (
                     "A correlated subquery runs once per outer row. A join or a window function is often cheaper.")})
             if node["kind"] == "sort":
+                purpose = node["label"].upper().split(" FOR ", 1)[-1]
                 advice.append({"severity": "info", "message": (
-                    f"{node['label'].title().replace('B-Tree', 'B-tree')}: an index whose column order matches "
-                    "could deliver rows already sorted.")})
+                    f"SQLite sorts with a temporary B-tree for {purpose}. An index whose column order matches "
+                    "could deliver the rows already sorted.")})
             visit(node["children"])
 
     visit(roots)

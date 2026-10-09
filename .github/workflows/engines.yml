@@ -1,0 +1,111 @@
+# Validates the lesson examples against real DuckDB, PostgreSQL, MySQL and
+# SQL Server instances. These engines are experimental in Joinery; this
+# workflow is how their support is verified. See docs/engines.md.
+name: Engines
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 5 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - joinery/engines/**
+      - joinery/datasets/**
+      - joinery/provision.py
+      - content/**
+      - .github/workflows/engines.yml
+
+permissions:
+  contents: read
+
+env:
+  SANDBOX_PASSWORD: Sandbox-Pass-2026
+
+jobs:
+  duckdb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements.txt duckdb==1.5.6
+      - run: python -m joinery build-datasets
+      - run: python -m unittest tests.test_engines -v
+      - run: python -m joinery validate --engine duckdb
+
+  postgres:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: joinery
+          POSTGRES_PASSWORD: admin-pass
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      JOINERY_POSTGRES_DSN: postgresql://joinery_sandbox:Sandbox-Pass-2026@localhost:5432/joinery
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements.txt "psycopg[binary]==3.3.5"
+      - run: python -m joinery provision --engine postgres --admin-dsn postgresql://postgres:admin-pass@localhost:5432/joinery --sandbox-password "$SANDBOX_PASSWORD"
+      - run: python -m joinery validate --engine postgres
+
+  mysql:
+    runs-on: ubuntu-latest
+    services:
+      mysql:
+        image: mysql:9.7
+        env:
+          MYSQL_ROOT_PASSWORD: admin-pass
+        ports: ["3306:3306"]
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -uroot -padmin-pass" --health-interval 5s --health-timeout 5s --health-retries 30
+    env:
+      JOINERY_MYSQL_DSN: mysql://joinery_sandbox:Sandbox-Pass-2026@127.0.0.1:3306
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements.txt PyMySQL==1.1.1
+      - run: python -m joinery provision --engine mysql --admin-dsn mysql://root:admin-pass@127.0.0.1:3306 --sandbox-password "$SANDBOX_PASSWORD"
+      - run: python -m joinery validate --engine mysql
+
+  mssql:
+    runs-on: ubuntu-latest
+    services:
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2025-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_PID: Developer
+          MSSQL_SA_PASSWORD: Admin-Pass-2026
+        ports: ["1433:1433"]
+    env:
+      JOINERY_MSSQL_DSN: Server=localhost,1433;UID=joinery_sandbox;PWD=Sandbox-Pass-2026;Encrypt=yes;TrustServerCertificate=yes
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: python -m pip install -r requirements.txt mssql-python==1.15.0
+      - name: Wait for SQL Server
+        run: |
+          python - <<'PY'
+          import time, mssql_python
+          for attempt in range(60):
+              try:
+                  mssql_python.connect("Server=localhost,1433;UID=sa;PWD=Admin-Pass-2026;Encrypt=yes;TrustServerCertificate=yes").close()
+                  break
+              except Exception:
+                  time.sleep(2)
+          PY
+      - run: python -m joinery provision --engine mssql --admin-dsn "Server=localhost,1433;UID=sa;PWD=Admin-Pass-2026;Encrypt=yes;TrustServerCertificate=yes" --sandbox-password "$SANDBOX_PASSWORD"
+      - run: python -m joinery validate --engine mssql

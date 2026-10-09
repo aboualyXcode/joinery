@@ -1,0 +1,106 @@
+# Lint, unit and integration tests, curriculum validation, browser tests,
+# dependency audits and a container smoke test on every push and pull request.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  python:
+    name: Python ${{ matrix.python }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: python -m pip install -r requirements-dev.txt
+      - name: Lint
+        run: python -m ruff check joinery tests scripts
+      - name: Unit, integration and security tests
+        run: python -m unittest discover -s tests -t . -v
+      - name: Validate every lesson example and exercise
+        run: python -m joinery validate
+
+  web:
+    name: Web client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: npm install --no-audit --no-fund
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+
+  e2e:
+    name: Browser tests
+    needs: [python, web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: python -m pip install -r requirements-dev.txt
+      - run: python -m playwright install --with-deps chromium
+      - run: npm install --no-audit --no-fund && npm run build
+      - run: python -m joinery build-datasets
+      - run: python -m unittest discover -s tests/e2e -t . -v
+        env:
+          JOINERY_E2E: "1"
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: python -m pip install pip-audit==2.9.0
+      - run: python -m pip_audit -r requirements-prod.txt -r requirements-engines.txt
+      - run: npm install --no-audit --no-fund && npm audit --audit-level=high
+
+  container:
+    name: Container smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - run: docker build -t joinery:ci .
+      - name: Run read-only and unprivileged, then query it
+        run: |
+          docker run -d --name joinery --read-only --tmpfs /tmp --cap-drop ALL \
+            --security-opt no-new-privileges --pids-limit 256 -p 8000:8000 joinery:ci
+          for attempt in $(seq 1 30); do curl -fsS http://127.0.0.1:8000/api/health && break; sleep 2; done
+          curl -fsS -X POST -H 'Content-Type: application/json' \
+            -d '{"sql": "SELECT count(*) AS orders FROM orders", "dataset": "shop"}' \
+            http://127.0.0.1:8000/api/run | grep -q '"row_count":1'
+          curl -fsS http://127.0.0.1:8000/ | grep -q '<div id="app">'
+      - if: failure()
+        run: docker logs joinery

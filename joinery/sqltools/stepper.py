@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .tokenizer import IDENT, NUMBER, OP, WORD, Token, significant, tokenize
+from .tokenizer import IDENT, NUMBER, WORD, Token, significant, tokenize
 
 CLAUSES = ("SELECT", "FROM", "WHERE", "GROUP BY", "HAVING", "WINDOW", "ORDER BY", "LIMIT")
 SET_OPERATORS = ("UNION", "INTERSECT", "EXCEPT")

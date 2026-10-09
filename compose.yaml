@@ -1,0 +1,93 @@
+# docker compose up --build
+#   Joinery with the SQLite engine on http://localhost:8000
+#
+# docker compose --profile engines up --build
+#   Also starts PostgreSQL 18, MySQL 9.7 and SQL Server 2025, loads the datasets
+#   into them and serves a second instance with every engine on http://localhost:8001.
+#   The server engines are experimental; see docs/engines.md.
+
+x-hardening: &hardening
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  pids_limit: 256
+  mem_limit: 1g
+  cpus: 2
+  restart: unless-stopped
+
+services:
+  app:
+    <<: *hardening
+    build: .
+    image: joinery:local
+    ports: ["127.0.0.1:8000:8000"]
+    environment:
+      JOINERY_ENGINES: sqlite
+
+  postgres:
+    profiles: [engines]
+    image: postgres:18
+    environment:
+      POSTGRES_DB: joinery
+      POSTGRES_PASSWORD: ${JOINERY_ADMIN_PASSWORD:-Joinery-Admin-2026}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d joinery"]
+      interval: 5s
+      retries: 30
+
+  mysql:
+    profiles: [engines]
+    image: mysql:9.7
+    environment:
+      MYSQL_ROOT_PASSWORD: ${JOINERY_ADMIN_PASSWORD:-Joinery-Admin-2026}
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD"]
+      interval: 5s
+      retries: 30
+
+  mssql:
+    profiles: [engines]
+    image: mcr.microsoft.com/mssql/server:2025-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_PID: Developer
+      MSSQL_SA_PASSWORD: ${JOINERY_ADMIN_PASSWORD:-Joinery-Admin-2026}
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1'"]
+      interval: 10s
+      retries: 30
+
+  provision:
+    profiles: [engines]
+    build:
+      context: .
+      args: { WITH_ENGINES: "1" }
+    image: joinery:engines
+    environment:
+      JOINERY_SANDBOX_PASSWORD: ${JOINERY_SANDBOX_PASSWORD:-Sandbox-Pass-2026}
+      ADMIN_PASSWORD: ${JOINERY_ADMIN_PASSWORD:-Joinery-Admin-2026}
+    command:
+      - sh
+      - -c
+      - >-
+        python -m joinery provision --engine postgres --admin-dsn "postgresql://postgres:$$ADMIN_PASSWORD@postgres:5432/joinery" &&
+        python -m joinery provision --engine mysql --admin-dsn "mysql://root:$$ADMIN_PASSWORD@mysql:3306" &&
+        python -m joinery provision --engine mssql --admin-dsn "Server=mssql,1433;UID=sa;PWD=$$ADMIN_PASSWORD;Encrypt=yes;TrustServerCertificate=yes"
+    depends_on:
+      postgres: { condition: service_healthy }
+      mysql: { condition: service_healthy }
+      mssql: { condition: service_healthy }
+
+  app-engines:
+    <<: *hardening
+    profiles: [engines]
+    image: joinery:engines
+    ports: ["127.0.0.1:8001:8000"]
+    environment:
+      JOINERY_ENGINES: sqlite,duckdb,postgres,mysql,mssql
+      JOINERY_POSTGRES_DSN: postgresql://joinery_sandbox:${JOINERY_SANDBOX_PASSWORD:-Sandbox-Pass-2026}@postgres:5432/joinery
+      JOINERY_MYSQL_DSN: mysql://joinery_sandbox:${JOINERY_SANDBOX_PASSWORD:-Sandbox-Pass-2026}@mysql:3306
+      JOINERY_MSSQL_DSN: Server=mssql,1433;UID=joinery_sandbox;PWD=${JOINERY_SANDBOX_PASSWORD:-Sandbox-Pass-2026};Encrypt=yes;TrustServerCertificate=yes
+    depends_on:
+      provision: { condition: service_completed_successfully }
