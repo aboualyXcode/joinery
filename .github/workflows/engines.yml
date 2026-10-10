@@ -27,7 +27,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: python -m pip install -r requirements.txt duckdb==1.5.6
@@ -50,7 +50,7 @@ jobs:
       JOINERY_POSTGRES_DSN: postgresql://joinery_sandbox:Sandbox-Pass-2026@localhost:5432/joinery
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: python -m pip install -r requirements.txt "psycopg[binary]==3.3.5"
@@ -71,7 +71,7 @@ jobs:
       JOINERY_MYSQL_DSN: mysql://joinery_sandbox:Sandbox-Pass-2026@127.0.0.1:3306
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: python -m pip install -r requirements.txt PyMySQL==1.1.1
@@ -92,7 +92,7 @@ jobs:
       JOINERY_MSSQL_DSN: Server=localhost,1433;UID=joinery_sandbox;PWD=Sandbox-Pass-2026;Encrypt=yes;TrustServerCertificate=yes
     steps:
       - uses: actions/checkout@v6
-      - uses: actions/setup-python@v6
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
       - run: python -m pip install -r requirements.txt mssql-python==1.15.0
