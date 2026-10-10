@@ -28,3 +28,10 @@ The browser tests fail on any console error, which includes Content Security Pol
 ## Environment notes
 
 The suite was developed against Python 3.12 with SQLite 3.45.1 and Node.js 22. CI runs Python 3.12, 3.13 and 3.14 and Node.js 24. The sandbox relies on POSIX resource limits, so run the tests on Linux or macOS (or WSL 2).
+
+## Diagrams and the published preview
+
+- `tests/test_explore.py` checks the Explore data (geometry, wiring, every live demo reproducing its own message, every sample message matching its own entry, comparisons that really differ), the dependency graphs and failure propagation, and the snapshot recorder.
+- `web/test/snapshot.test.ts` checks that the browser computes the same snapshot key as Python.
+- `tests/e2e/test_ui.py` plays a flow, traces and reproduces a failure, matches a pasted message, maps queries, visualizes from the playground and finds a join path.
+- `tests/e2e/test_static.py` serves a built preview from `/joinery/` and checks the banner, recorded examples and diagrams, and the message for unrecorded SQL. It runs when `JOINERY_STATIC_SITE` points at the build.

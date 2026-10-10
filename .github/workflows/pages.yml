@@ -1,0 +1,60 @@
+# Builds the published preview: the static client plus every API response it
+# replays, recorded from the real engine, smoke-tested from a subpath and
+# deployed to GitHub Pages. Enable once: Settings > Pages > Source: GitHub Actions.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build the preview
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+      - run: python -m pip install -r requirements-dev.txt
+      - run: npm install --no-audit --no-fund
+      - name: Build the static client
+        run: npm run build:static
+      - name: Record the responses it replays
+        run: |
+          python -m joinery build-datasets
+          python -m joinery snapshot --out web/site/snapshots
+      - name: Smoke-test it from a subpath
+        run: |
+          python -m playwright install --with-deps chromium
+          JOINERY_STATIC_SITE=web/site python -m unittest tests.e2e.test_static -v
+      - uses: actions/configure-pages@v6
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: web/site
+
+  deploy:
+    name: Deploy
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

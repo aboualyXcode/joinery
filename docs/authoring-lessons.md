@@ -65,14 +65,22 @@ Numbers compare with six-decimal tolerance, and integers equal their floating-po
 
 ## Widgets
 
-| Type | What it shows |
-|---|---|
-| `processing-order` | A query numbered by evaluation order, with a live stepper |
-| `join-visualizer` | The join lab |
-| `isolation-simulator` | The transaction isolation simulator |
-| `index-lab` | The index lab |
-| `query-journey` | Parser to storage, for a query the learner types |
-| `erd` | The diagram of the lesson's dataset |
+A section can open with one interactive widget: `widget: {type: query-map, preset: spend-tiers}`.
+
+| Type | What it shows | Options |
+|---|---|---|
+| `processing-order` | A query numbered by evaluation order, with a live stepper | |
+| `join-visualizer` | The join lab | |
+| `isolation-simulator` | The transaction isolation simulator | |
+| `index-lab` | The index lab | |
+| `query-journey` | Parser to storage, for a query the learner types | |
+| `erd` | The diagram of the lesson's dataset | |
+| `relationships` | The lesson dataset's diagram with the join path finder | |
+| `engine-map` | The engine map with its flow player | `flow`: the flow to start with |
+| `failure-map` | The failure fan and its trace on the map | `symptom` or `failure`: where to start |
+| `query-map` | The query map of one query | `preset`: a query id from `content/explore.yaml` |
+
+The content tests fail if a `query-map` names a preset that does not exist.
 
 ## Workflow
 

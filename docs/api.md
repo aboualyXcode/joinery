@@ -49,3 +49,15 @@ When a statement fails, its `error` has `type`, `message`, `code` and an `explan
 ## Check
 
 `{"sql": "..."}` returns `passed`, `summary`, `details`, `hint`, `expected` and `actual` previews, `warnings`, and `error` if the SQL failed.
+
+## Explore data
+
+`GET /api/explore` returns `content/explore.yaml` as loaded and validated: the engine map (`stations` and `edges`), the `flows`, the `failures` with their paths, message patterns, demos and comparisons, the `symptoms`, the query-map `queries` and the lab and playground `presets`.
+
+## Visualize
+
+`POST /api/visualize` takes the same body as Steps, for one statement, and returns everything the query map draws:
+
+- `dependencies`: `nodes` of kind `table`, `cte`, `subquery`, `function`, `missing` or `query`, each with `rows`, `work`, and `status` (`ok`, `error` where a failure starts, `blocked` downstream of one); subqueries also carry `role` (`derived`, `scalar`, `in`, `not-in`, `exists`, `not-exists`) and `correlated`. `edges` are `reads`, `filters`, `value`, `writes` or `recursive`, with `broken` when their source failed. Statements other than `SELECT`, `INSERT`, `UPDATE` and `DELETE` return `supported: false` and a `reason`.
+- `steps`: the Steps response, with `vm_steps` per stage.
+- `plan`: the Explain response, or an `error`.

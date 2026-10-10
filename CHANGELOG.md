@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Explore: an engine map of 19 components with five animated flows; a failure map of 33 failures traced from where they start to where you notice them, with symptom fans, a paste-a-message matcher, 16 live reproductions and 10 side-by-side comparisons; a query map; and a relationship explorer with a join path finder
+- Visualize in every editor: bottlenecks, the dependency graph with failure propagation, rows kept per stage shaded by work, and the plan as a tree
+- Every error shows where it starts and links to its trace; failing scripts show a statement timeline
+- 18 more lesson sections carry a diagram
+- `POST /api/visualize`, `GET /api/explore` and `python -m joinery snapshot`
+- A static preview published to GitHub Pages
+
 ## 0.1.0 (2026-10-09)
 
 First release.

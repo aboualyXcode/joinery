@@ -83,6 +83,14 @@ The client is TypeScript with no runtime dependencies, bundled by esbuild. A sma
 
 Lessons are YAML files validated at startup: unknown datasets, engines, widgets, check modes or duplicate IDs stop the server with a clear message. `python -m joinery validate` runs every example and grades every exercise, both the reference solution (must pass) and the starter code (must not), so broken content fails CI.
 
+## Diagrams
+
+The Explore data lives in `content/explore.yaml` and is validated by `joinery/content/explore.py` when the platform starts: stations may not overlap, no connection may pass through a station (curved connections are sampled along their length), every flow step and failure path must follow a connection, and every pattern must compile without constructs browsers lack. The tests then reproduce each live demo and check that the engine's message matches that failure first.
+
+`/api/visualize` combines three things. `sqltools/dependencies.py` builds the dependency graph from tokens. The service counts every CTE and uncorrelated subquery in its own batch, prefixed with only the CTEs it reads, so a failure is pinned to one node; `propagate` then marks that node as the origin and everything downstream as blocked. The stepper and the plan come from the existing endpoints.
+
+The client draws all of it as SVG built with the same `h`/`s` helpers as the rest of the interface, with no chart library. For the published preview, `api.ts` swaps its network layer for recorded responses; nothing else in the client knows the difference.
+
 ## Design decisions
 
 | Decision | Why |

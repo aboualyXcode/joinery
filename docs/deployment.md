@@ -31,6 +31,14 @@ Terminate TLS at a proxy such as Caddy, nginx or a cloud load balancer, and set 
 
 The client is plain files in `web/dist` and can live on a CDN, but it needs the API on the same origin because the Content Security Policy only allows `connect-src 'self'`. Proxy `/api/` to Joinery, or serve both from Joinery as the image does.
 
+## The published preview
+
+`npm run build:static` builds the client into `web/site` with relative URLs and a build flag that makes it replay recorded responses instead of calling the API. `python -m joinery snapshot --out web/site/snapshots` records them from the real engine: every GET endpoint, every lesson example (run, steps, plan and query map), every failure demo and comparison, the query-map, lab and playground presets. That is about 700 responses and 5 MiB, with results capped at 60 rows. `make site` runs both.
+
+A GET request is stored at `snapshots/get/<path>.json` and a POST at `snapshots/post/<sha1>.json`, hashed over the path, dataset, engine, setup and SQL. `joinery/snapshot.py` and `web/src/api.ts` build that key the same way, and a test on each side checks the same value. SQL that was not recorded gets a message explaining how to run Joinery.
+
+The Pages workflow builds, records, smoke-tests the result from a `/joinery/` subpath and deploys it on every push to `main`. Enable it once under Settings → Pages → Source: GitHub Actions. The preview needs no server and sends no SQL anywhere.
+
 ## Upgrades
 
 Dataset images rebuild automatically when the generator code or SQLite version changes, because the manifest stores a fingerprint of both. Lesson content is loaded at startup, so deploy a new image to publish content changes. Progress lives in learners' browsers and survives upgrades; exercise IDs are its keys, so do not rename them.
@@ -38,3 +46,5 @@ Dataset images rebuild automatically when the generator code or SQLite version c
 ## GitHub Actions
 
 Workflows run on every push and pull request (`CI`, `CodeQL`), and on a schedule or manually (`Engines`). Dependabot opens weekly update pull requests for pip, npm, GitHub Actions and the Docker base images.
+
+`pages.yml` builds and deploys the published preview described above.

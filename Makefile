@@ -3,7 +3,7 @@ NPM ?= npm
 HOST ?= 127.0.0.1
 PORT ?= 8000
 
-.PHONY: help setup build datasets dev test test-py test-web e2e lint typecheck validate audit check docker clean
+.PHONY: help setup build site datasets dev test test-py test-web e2e lint typecheck validate audit check docker clean
 
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -15,6 +15,10 @@ setup: ## Install Python and Node dependencies and the Playwright browser
 
 build: ## Build the web client into web/dist
 	$(NPM) run build
+
+site: datasets ## Build the published preview into web/site (static client and recorded responses)
+	$(NPM) run build:static
+	$(PYTHON) -m joinery snapshot --out web/site/snapshots
 
 datasets: ## Build the sample datasets into var/datasets
 	$(PYTHON) -m joinery build-datasets

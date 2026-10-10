@@ -54,3 +54,21 @@ joinery/
 ```
 
 Generated and local-only paths are ignored by git: `var/` (dataset images), `web/dist/` (the built client) and `node_modules/`.
+
+## Diagrams and the published preview
+
+```text
+content/explore.yaml                  engine map, flows, failures, symptom fans, query and lab presets
+joinery/content/explore.py            loads and validates it, checks the map geometry
+joinery/sqltools/dependencies.py      dependency graphs, counting queries, failure propagation
+joinery/snapshot.py                   records responses for the published preview
+web/src/lib/explore.ts                the loaded Explore data and the message matcher
+web/src/components/enginemap.ts       the engine map, flow player and failure trace
+web/src/components/failures.ts        symptom fans, the paste matcher, live demos and comparisons
+web/src/components/queryflow.ts       the query map: findings, dependencies, stage band, plan tree
+web/src/components/timeline.ts        statement timelines for scripts that fail
+web/src/views/explore.ts              the Explore section
+tests/test_explore.py                 data, dependency and snapshot tests
+tests/e2e/test_static.py              smoke test of the static preview
+.github/workflows/pages.yml           builds, records, tests and deploys the preview
+```
