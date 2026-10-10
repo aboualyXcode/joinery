@@ -1,5 +1,8 @@
 // Result tables, error explanations and lint advice.
 import { h } from '../lib/dom.ts';
+import { exploreData, hasExplore, matchFailure } from '../lib/explore.ts';
+import { href } from '../router.ts';
+import { pathChips } from './enginemap.ts';
 import { formatCell, formatMs, formatSteps, numericColumns, plural } from '../lib/format.ts';
 import type { Cell, EngineError, Finding, RunResponse, StatementResult } from '../types.ts';
 
@@ -31,10 +34,19 @@ export function renderTable(columns: string[], rows: Cell[][], options: TableOpt
         h('td', { class: 'empty', colspan: String(columns.length + (kept ? 1 : 0)) }, 'No rows')))));
 }
 
+function propagation(message: string): HTMLElement | null {
+  const failure = hasExplore() ? matchFailure(message) : null;
+  if (!failure) return null;
+  return h('div', { class: 'propagation' },
+    pathChips(exploreData(), failure),
+    h('a', { href: href(`explore/failures/${failure.id}`) }, 'Trace it on the engine map'));
+}
+
 export function renderError(error: EngineError, onSuggestion?: (value: string) => void): HTMLElement {
   const info = error.explanation;
   const suggestions = info?.suggestions ?? [];
   return h('div', { class: 'callout error', role: 'alert' },
+    propagation(error.message),
     h('p', { class: 'callout-title' }, info?.title ?? 'The query failed'),
     info?.detail ? h('p', null, info.detail) : null,
     h('p', { class: 'engine-message' }, h('code', null, error.message)),

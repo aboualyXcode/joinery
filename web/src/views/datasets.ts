@@ -1,5 +1,6 @@
 import { api } from '../api.ts';
-import { renderErd, renderTableDetail } from '../components/erd.ts';
+import { REPOSITORY } from '../api.ts';
+import { renderErd, renderPathFinder, renderTableDetail } from '../components/erd.ts';
 import { h, mount } from '../lib/dom.ts';
 import { DIALECT_NAMES } from '../lib/format.ts';
 import { href } from '../router.ts';
@@ -11,6 +12,7 @@ export async function renderDatasets(target: HTMLElement, meta: Meta, id: string
   document.title = `${detail.title} | Joinery`;
   const tableArea = h('div', { class: 'table-area', 'aria-live': 'polite' });
   const select = (table: TableSchema) => mount(tableArea, renderTableDetail(table, detail.id));
+  const diagram = renderErd(detail, select);
   mount(target, h('div', { class: 'page wide' },
     h('nav', { class: 'segmented', 'aria-label': 'Datasets' }, meta.datasets.map((d) => h('a', {
       href: href(`datasets/${d.id}`), 'aria-current': d.id === detail.id ? 'page' : undefined,
@@ -18,14 +20,16 @@ export async function renderDatasets(target: HTMLElement, meta: Meta, id: string
     h('h1', null, detail.title),
     h('div', { class: 'prose', html: detail.description_html }),
     h('p', { class: 'muted' }, 'Select a table in the diagram to see its columns. PK marks a primary key and FK a foreign key.'),
-    renderErd(detail, select),
+    diagram,
+    renderPathFinder(detail, diagram),
     tableArea,
     h('section', { class: 'downloads' },
       h('h2', null, 'Load it into your own database'),
       h('p', null, 'Each script creates the tables and inserts every row, using the types and syntax of its engine.'),
-      h('ul', { class: 'download-list' }, detail.dialects.map((dialect) => h('li', null,
-        h('a', { href: api.exportUrl(detail.id, dialect), download: `${detail.id}.${dialect}.sql` },
-          `${DIALECT_NAMES[dialect] ?? dialect} script`)))))));
+      meta.static ? h('p', null, 'Download the scripts from a running Joinery, or run ', h('code', null, `python -m joinery export --dataset ${detail.id} --dialect postgres`), '. ', h('a', { href: REPOSITORY }, 'Get Joinery'), '.')
+        : h('ul', { class: 'download-list' }, detail.dialects.map((dialect) => h('li', null,
+          h('a', { href: api.exportUrl(detail.id, dialect), download: `${detail.id}.${dialect}.sql` },
+            `${DIALECT_NAMES[dialect] ?? dialect} script`)))))));
   const first = detail.tables[0];
   if (first) select(first);
 }

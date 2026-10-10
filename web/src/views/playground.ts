@@ -1,17 +1,10 @@
 import { api } from '../api.ts';
 import { createWorkbench } from '../components/workbench.ts';
 import { h, mount } from '../lib/dom.ts';
+import { exploreData } from '../lib/explore.ts';
 import { formatNumber } from '../lib/format.ts';
 import { preference, setPreference } from '../lib/store.ts';
 import type { DatasetDetail, Meta } from '../types.ts';
-
-const STARTERS: Record<string, string> = {
-  shop: "SELECT c.country, count(*) AS orders, round(sum(p.amount), 2) AS revenue\nFROM orders AS o\nJOIN customers AS c ON c.id = o.customer_id\nJOIN payments AS p ON p.order_id = o.id AND p.status = 'captured'\nGROUP BY c.country\nORDER BY revenue DESC;",
-  bank: "SELECT m.category, count(*) AS purchases, round(-sum(t.amount), 2) AS spent\nFROM transactions AS t\nJOIN merchants AS m ON m.id = t.merchant_id\nWHERE t.kind = 'card'\nGROUP BY m.category\nORDER BY spent DESC;",
-  analytics: 'SELECT name, count(*) AS events, count(DISTINCT user_id) AS users\nFROM events\nGROUP BY name\nORDER BY events DESC;',
-  pipeline: 'SELECT load_id, count(*) AS rows_received, count(DISTINCT order_ref) AS distinct_orders\nFROM raw_orders\nGROUP BY load_id;',
-  joinlab: 'SELECT p.name AS player, t.name AS team\nFROM players AS p\nLEFT JOIN teams AS t ON t.id = p.team_id;',
-};
 
 function schemaView(detail: DatasetDetail, preview: (sql: string) => void): HTMLElement {
   return h('div', null,
@@ -27,6 +20,7 @@ function schemaView(detail: DatasetDetail, preview: (sql: string) => void): HTML
 
 export async function renderPlayground(target: HTMLElement, meta: Meta, params: URLSearchParams): Promise<void> {
   document.title = 'Playground | Joinery';
+  const STARTERS = exploreData().presets.playground;
   let dataset = params.get('dataset') ?? preference('playground.dataset', 'shop');
   if (!meta.datasets.some((d) => d.id === dataset)) dataset = 'shop';
   const savedEngine = preference('playground.engine', 'sqlite');

@@ -71,6 +71,7 @@ sections:
       scenario in the simulator to see the timeline under each level.
     widget: {type: isolation-simulator}
   - title: Locks, deadlocks and retries
+    widget: {type: engine-map, flow: lock-wait}
     body: |
       Writers take locks. When two transactions wait for each other's locks, the database detects the
       **deadlock** and aborts one of them. Under SERIALIZABLE (and PostgreSQL's REPEATABLE READ) the

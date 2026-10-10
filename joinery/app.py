@@ -114,6 +114,16 @@ def create_app(settings: Settings | None = None) -> Flask:
             raise ServiceError(f"There is no lesson called '{lesson_id}'.", 404)
         return found
 
+    @app.get("/api/explore")
+    def explore():
+        return platform.explore
+
+    @app.post("/api/visualize")
+    def visualize():
+        data = body()
+        return platform.visualize(sql_field(data) or "", text_field(data, "dataset", "shop") or "",
+                                  text_field(data, "engine"))
+
     @app.get("/api/dialects")
     def dialects():
         return platform.content.dialects

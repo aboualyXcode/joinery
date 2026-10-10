@@ -7,9 +7,11 @@ import type { EngineError, Meta, RunResponse } from '../types.ts';
 import { createEditor } from './editor.ts';
 import { renderPlan } from './plan.ts';
 import { renderError, renderRun, statementSummary } from './results.ts';
+import { renderQueryMap } from './queryflow.ts';
 import { renderSteps } from './stepper.ts';
+import { renderTimeline } from './timeline.ts';
 
-export type Mode = 'run' | 'steps' | 'plan';
+export type Mode = 'run' | 'visualize' | 'steps' | 'plan';
 
 export interface WorkbenchOptions {
   sql: string;
@@ -57,6 +59,7 @@ export function createWorkbench(options: WorkbenchOptions): Workbench {
   }, label);
   const buttons: Record<Mode, HTMLButtonElement> = {
     run: button('run', 'Run'),
+    visualize: button('visualize', 'Visualize'),
     steps: button('steps', 'Step through'),
     plan: button('plan', 'Explain plan'),
   };
@@ -100,19 +103,24 @@ export function createWorkbench(options: WorkbenchOptions): Workbench {
     }
     Object.entries(buttons).forEach(([m, b]) => b.setAttribute('aria-pressed', String(m === mode)));
     setBusy(true);
-    status.textContent = mode === 'run' ? 'Running\u2026' : mode === 'steps' ? 'Running each stage\u2026' : 'Explaining\u2026';
+    status.textContent = mode === 'run' ? 'Running\u2026' : mode === 'visualize' ? 'Mapping the query\u2026'
+      : mode === 'steps' ? 'Running each stage\u2026' : 'Explaining\u2026';
     try {
       if (mode === 'run') {
         const submitted = options.setup ? `${options.setup.trim().replace(/;$/, '')};\n${sql}` : sql;
         const result = await api.run({ sql: submitted, dataset, engine });
         markFirstError(result, submitted);
-        mount(output, renderRun(result, replaceAtError));
+        mount(output, result.error || result.skipped ? renderTimeline(result, submitted) : null, renderRun(result, replaceAtError));
         const failed = result.statements.find((s) => s.error);
         const last = result.statements[result.statements.length - 1];
         status.textContent = result.error
           ? `Failed: ${result.error.explanation?.title ?? result.error.message}`
           : failed ? 'A statement failed.'
             : last ? `${plural(result.statements.length, 'statement')} ran. ${statementSummary(last)}.` : 'Done.';
+      } else if (mode === 'visualize') {
+        const map = await api.visualize({ sql, dataset, engine });
+        mount(output, renderQueryMap(map));
+        status.textContent = `Mapped ${plural(map.dependencies.nodes?.length ?? 0, 'part')} and ${plural(map.steps.stages.length, 'stage')}.`;
       } else if (mode === 'steps') {
         const steps = await api.steps({ sql, dataset, engine });
         mount(output, renderSteps(steps));
@@ -133,7 +141,7 @@ export function createWorkbench(options: WorkbenchOptions): Workbench {
   }
 
   const toolbar = h('div', { class: 'toolbar' },
-    buttons.run, buttons.steps, buttons.plan,
+    buttons.run, buttons.visualize, buttons.steps, buttons.plan,
     h('span', { class: 'spacer' }),
     datasetSelect, engineSelect,
     h('span', { class: 'shortcut' }, h('kbd', null, 'Ctrl'), ' + ', h('kbd', null, 'Enter'), ' runs'));

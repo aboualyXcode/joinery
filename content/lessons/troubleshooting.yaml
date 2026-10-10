@@ -12,6 +12,7 @@ objectives:
   - Recognize lock waits, deadlocks and timeouts
 sections:
   - title: Read the error first
+    widget: {type: failure-map, symptom: fails}
     body: |
       Errors fall into a few families. **Syntax** errors come from the parser and name a nearby token.
       **Name** errors (unknown table or column, ambiguous column) come from the binder. **Constraint**
@@ -30,6 +31,7 @@ sections:
           SELECT customer_id FROM orders WHERE count(*) > 5 GROUP BY customer_id;
         expect: {error: misuse of aggregate}
   - title: Wrong results
+    widget: {type: failure-map, symptom: wrong}
     body: |
       A query that runs is not necessarily right. Check these first:
 
@@ -62,6 +64,7 @@ sections:
         expect: {rows: 4}
         portable: true
   - title: Slow queries
+    widget: {type: failure-map, symptom: slow}
     body: |
       1. Confirm the problem: measure the query on its own, with production-like data.
       2. Read the plan: full scans of large tables, nested loops over scans, sorts, correlated subqueries.
@@ -70,6 +73,7 @@ sections:
       5. Fix the biggest cost first: an index, a sargable predicate, filtering earlier, a set-based rewrite.
       6. Measure again, and check that writes did not get slower.
   - title: Locks, deadlocks and timeouts
+    widget: {type: failure-map, symptom: hangs}
     body: |
       A query that is usually fast but sometimes hangs is often **waiting for a lock** held by another
       transaction, typically a long-running or forgotten open one. Look at the engine's activity views

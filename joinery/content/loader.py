@@ -19,7 +19,8 @@ import yaml
 from markdown_it import MarkdownIt
 
 LEVELS = ("beginner", "intermediate", "advanced")
-WIDGETS = ("join-visualizer", "isolation-simulator", "index-lab", "query-journey", "processing-order", "erd")
+WIDGETS = ("join-visualizer", "isolation-simulator", "index-lab", "query-journey", "processing-order", "erd",
+           "engine-map", "failure-map", "query-map", "relationships")
 ENGINES = ("sqlite", "postgres", "mysql", "mssql", "duckdb")
 CHECK_MODES = ("result", "state")
 _SLUG = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")

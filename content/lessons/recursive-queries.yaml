@@ -38,6 +38,7 @@ sections:
           mssql: |
             WITH n(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM n WHERE x < 10) SELECT x FROM n;
   - title: Walking down a hierarchy
+    widget: {type: query-map, preset: org-chart}
     body: |
       Starting from the CEO (no manager), each round adds the people who report to someone found in the
       previous round. Carrying `depth` and a `path` string along makes the tree visible, and sorting by

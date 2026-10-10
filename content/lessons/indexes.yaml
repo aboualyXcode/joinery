@@ -25,6 +25,7 @@ sections:
       in your private copy and runs the plan and the query both ways.
     widget: {type: index-lab}
   - title: SCAN versus SEARCH
+    widget: {type: engine-map, flow: index}
     body: |
       `orders.customer_id` deliberately has no index. Compare the plans: `SCAN orders` reads every row,
       while `SEARCH orders USING INDEX` jumps to the matching ones. The **work** figure counts SQLite

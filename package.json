@@ -9,6 +9,7 @@
   },
   "scripts": {
     "build": "node scripts/build-web.mjs",
+    "build:static": "node scripts/build-web.mjs --static",
     "watch": "node scripts/build-web.mjs --watch",
     "typecheck": "tsc -p tsconfig.json",
     "test": "node --test \"web/test/**/*.test.ts\"",

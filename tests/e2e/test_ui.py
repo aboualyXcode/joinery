@@ -169,10 +169,65 @@ class BrowserTests(unittest.TestCase):
         self.open("nowhere")
         self.page.get_by_role("heading", name="There is no page here").wait_for()
 
+    def test_engine_map_plays_a_flow(self):
+        self.open("explore/flows/select")
+        self.page.locator(".station.active").wait_for()
+        self.page.get_by_role("button", name="Next", exact=True).click()
+        self.page.get_by_role("button", name="Next", exact=True).click()
+        self.assertIn("Step 3 of", self.page.locator(".flow-counter").inner_text())
+        self.assertEqual(self.page.locator(".wire.travel").count(), 1)
+        self.page.locator('.station[aria-label^="Optimizer"]').click()
+        self.assertIn("Starts here", self.page.locator(".station-detail").inner_text())
+
+    def test_failure_travels_and_reproduces(self):
+        self.open("explore/failures/unique-violation")
+        self.page.locator(".station.origin").wait_for()
+        self.assertGreater(self.page.locator(".trace-path").count(), 2)
+        self.page.get_by_role("button", name="Reproduce it on SQLite").click()
+        self.page.locator(".timeline .t-failed").wait_for()
+        self.assertEqual(self.page.locator(".timeline .t-skipped").count(), 2)
+        self.assertIn("UNIQUE constraint failed", self.page.locator(".live .callout.error").inner_text())
+        self.page.locator("#paste-error").fill("ERROR:  deadlock detected\nDETAIL:  Process 4242 waits for ShareLock")
+        self.assertIn("Deadlock", self.page.locator(".match-note").inner_text())
+        self.page.locator(".station.origin").wait_for()
+
+    def test_query_map_shows_dependencies_stages_and_plan(self):
+        self.open("explore/query?preset=broken-cte")
+        self.page.locator(".dep-node.status-error").wait_for()
+        self.assertGreaterEqual(self.page.locator(".dep-node.status-blocked").count(), 2)
+        self.assertIn("fails", self.page.locator(".findings").inner_text())
+        self.page.get_by_role("button", name="Spend tiers from chained CTEs").click()
+        self.page.locator(".band-stage").first.wait_for()
+        self.page.locator(".band-stage").nth(2).click()
+        self.page.locator(".qm-detail table.data").wait_for()
+        self.assertGreater(self.page.locator(".plan-g").count(), 1)
+
+    def test_visualize_from_the_playground_and_errors_link_to_the_map(self):
+        self.open("playground")
+        self.page.get_by_role("button", name="Visualize").click()
+        self.page.locator(".query-map svg.band").wait_for()
+        editor = self.page.locator(".playground textarea")
+        editor.fill("SELECT emial FROM customers")
+        editor.press("Control+Enter")
+        self.page.locator(".callout.error .path-chips").wait_for()
+        self.page.get_by_role("link", name="Trace it on the engine map").click()
+        self.page.locator(".station.origin").wait_for()
+
+    def test_relationship_path_finder(self):
+        self.open("explore/relationships/shop")
+        self.page.get_by_label("Join from").select_option("customers")
+        self.page.get_by_label("Join to").select_option("categories")
+        self.page.locator(".path-output pre").wait_for()
+        sql = self.page.locator(".path-output pre").inner_text()
+        self.assertEqual(sql.count("JOIN "), 3, sql)  # the shortest foreign-key chain
+        self.assertIn("JOIN products", sql)
+        self.assertIn("JOIN categories", sql)
+        self.assertEqual(self.page.locator("svg.erd .erd-table.on-path").count(), 4)
+
     def test_mobile_layout_has_no_horizontal_scroll(self):
         context = self.browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True)
         page = context.new_page()
-        for route in ("", "learn/aggregation", "playground", "labs/joins"):
+        for route in ("", "learn/aggregation", "playground", "labs/joins", "explore/map", "explore/failures"):
             page.goto(f"{self.base}/#/{route}")
             page.locator("main h1").first.wait_for()
             page.wait_for_timeout(300)
@@ -183,6 +238,7 @@ class BrowserTests(unittest.TestCase):
     def test_zz_screenshots(self):
         out = ROOT / "docs" / "screenshots"
         out.mkdir(parents=True, exist_ok=True)
+        unstick = "document.querySelector('.site-header').style.position = 'static'"
         self.open("")
         self.page.get_by_role("button", name="Run it stage by stage").click()
         self.page.locator(".stage-tab").nth(1).click()
@@ -219,6 +275,36 @@ class BrowserTests(unittest.TestCase):
         self.page.get_by_role("button", name="Show all steps").click()
         self.page.wait_for_timeout(200)
         self.page.screenshot(path=str(out / "isolation-lab.png"))
+        self.open("explore/flows/select")
+        for _ in range(9):
+            self.page.get_by_role("button", name="Next", exact=True).click()
+        self.page.wait_for_timeout(800)
+        self.page.screenshot(path=str(out / "engine-map-flow.png"))
+        self.open("explore/failures/unique-violation")
+        self.page.get_by_role("button", name="Reproduce it on SQLite").click()
+        self.page.locator(".timeline").wait_for()
+        self.page.wait_for_timeout(1500)
+        self.page.evaluate(unstick)
+        self.page.screenshot(path=str(out / "failure-propagation.png"), full_page=True)
+        self.open("explore/query?preset=broken-cte")
+        self.page.locator(".dep-node.status-error").wait_for()
+        self.page.locator(".query-map").scroll_into_view_if_needed()
+        self.page.wait_for_timeout(300)
+        self.page.evaluate(unstick)
+        self.page.screenshot(path=str(out / "query-map-error.png"), full_page=True)
+        self.open("explore/query?preset=spend-tiers")
+        self.page.locator(".band-stage").first.wait_for()
+        self.page.locator(".band-stage").nth(2).click()
+        self.page.wait_for_timeout(300)
+        self.page.evaluate(unstick)
+        self.page.screenshot(path=str(out / "query-map.png"), full_page=True)
+        self.open("explore/relationships/shop")
+        self.page.get_by_label("Join from").select_option("customers")
+        self.page.get_by_label("Join to").select_option("categories")
+        self.page.locator(".path-output pre").wait_for()
+        self.page.wait_for_timeout(300)
+        self.page.evaluate(unstick)
+        self.page.screenshot(path=str(out / "relationships.png"), full_page=True)
         mobile = self.browser.new_context(viewport={"width": 390, "height": 844}, is_mobile=True, device_scale_factor=2)
         page = mobile.new_page()
         page.goto(f"{self.base}/#/learn/joins")

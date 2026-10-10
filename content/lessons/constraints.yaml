@@ -12,6 +12,7 @@ objectives:
   - Use generated columns and referential actions
 sections:
   - title: Rules the database enforces
+    widget: {type: failure-map, failure: foreign-key-violation}
     body: |
       Application code changes and has bugs; constraints hold for every client, script and migration.
       They are your last line of defense:

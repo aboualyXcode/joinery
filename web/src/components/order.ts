@@ -2,24 +2,17 @@
 // the order in which the database evaluates it, with a live stepper.
 import { api } from '../api.ts';
 import { h, mount } from '../lib/dom.ts';
+import { exploreData } from '../lib/explore.ts';
 import { renderError } from './results.ts';
 import { renderSteps } from './stepper.ts';
 import { requestError } from './workbench.ts';
 
-const CLAUSES: [string, string, number][] = [
-  ['SELECT', 'c.country, count(*) AS orders', 5],
-  ['FROM', 'orders AS o JOIN customers AS c ON c.id = o.customer_id', 1],
-  ['WHERE', "o.status = 'delivered'", 2],
-  ['GROUP BY', 'c.country', 3],
-  ['HAVING', 'count(*) > 20', 4],
-  ['ORDER BY', 'orders DESC', 6],
-  ['LIMIT', '5', 7],
-];
 const ORDINALS = ['first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh'];
-export const SAMPLE_SQL = CLAUSES.map(([keyword, body]) => `${keyword} ${body}`).join('\n');
 
 export function renderProcessingOrder(hero = false): HTMLElement {
-  const items = CLAUSES.map(([keyword, body, step]) => {
+  const clauses = exploreData().presets.processing;
+  const sample = clauses.map(([keyword, body]) => `${keyword} ${body}`).join('\n');
+  const items = clauses.map(([keyword, body, step]) => {
     const item = h('li', { class: 'clause', 'data-step': String(step) },
       h('span', { class: 'step-badge', title: `Evaluated ${ORDINALS[step - 1] ?? ''}` },
         h('span', { class: 'sr-only' }, 'evaluation step '), String(step)),
@@ -59,7 +52,7 @@ export function renderProcessingOrder(hero = false): HTMLElement {
         run.disabled = true;
         mount(output, h('p', { class: 'loading', role: 'status' }, 'Running each stage on the shop data\u2026'));
         try {
-          mount(output, renderSteps(await api.steps({ sql: SAMPLE_SQL, dataset: 'shop' })));
+          mount(output, renderSteps(await api.steps({ sql: sample, dataset: 'shop' })));
         } catch (error) {
           mount(output, renderError(requestError(error)));
         } finally {

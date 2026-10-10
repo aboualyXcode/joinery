@@ -10,6 +10,7 @@ node_modules/
 
 # Build output and runtime data
 web/dist/
+web/site/
 var/
 
 # Test artifacts

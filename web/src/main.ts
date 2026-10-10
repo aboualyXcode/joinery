@@ -1,12 +1,14 @@
 // Application shell: header, routing, theme and progress summary.
-import { api } from './api.ts';
+import { api, REPOSITORY } from './api.ts';
 import { renderError } from './components/results.ts';
 import { requestError } from './components/workbench.ts';
 import { h, mount, s, spinner } from './lib/dom.ts';
+import { setExplore } from './lib/explore.ts';
 import { preference, setPreference, store } from './lib/store.ts';
 import { href, parseHash } from './router.ts';
 import type { Meta } from './types.ts';
 import { renderDatasets } from './views/datasets.ts';
+import { renderExplore } from './views/explore.ts';
 import { renderHome } from './views/home.ts';
 import { renderLabs } from './views/labs.ts';
 import { renderCurriculum, renderLesson } from './views/learn.ts';
@@ -15,7 +17,7 @@ import { renderProgress } from './views/progress.ts';
 import { renderReference } from './views/reference.ts';
 
 const NAV: [string, string][] = [
-  ['learn', 'Learn'], ['playground', 'Playground'], ['datasets', 'Datasets'], ['labs', 'Labs'], ['reference', 'Reference'],
+  ['learn', 'Learn'], ['explore', 'Explore'], ['playground', 'Playground'], ['datasets', 'Datasets'], ['labs', 'Labs'], ['reference', 'Reference'],
 ];
 const THEMES = ['system', 'light', 'dark'];
 
@@ -92,9 +94,17 @@ async function boot(): Promise<void> {
     mount(app, h('main', { class: 'page' }, h('h1', null, 'Joinery could not start'), renderError(requestError(error))));
     return;
   }
+  try {
+    setExplore(await api.explore());
+  } catch {
+    // The diagrams that need it explain the problem themselves.
+  }
   const main = h('main', { id: 'main-content', tabindex: '-1' });
   const top = header(main);
-  mount(app, top.element, main, footer(meta), h('div', { id: 'announcer', class: 'sr-only', 'aria-live': 'polite' }));
+  const banner = meta.static ? h('div', { class: 'static-banner', role: 'note' },
+    'You are looking at the published preview: every result was recorded from the real SQLite engine. ',
+    h('a', { href: `${REPOSITORY}#quick-start` }, 'Run Joinery yourself'), ' to execute your own SQL and check answers.') : null;
+  mount(app, top.element, banner, main, footer(meta), h('div', { id: 'announcer', class: 'sr-only', 'aria-live': 'polite' }));
   store.subscribe(() => void top.refresh());
   void top.refresh();
   let first = true;
@@ -107,6 +117,7 @@ async function boot(): Promise<void> {
     try {
       if (!section) await renderHome(main, meta);
       else if (section === 'learn') await (path[1] ? renderLesson(main, path[1], meta) : renderCurriculum(main));
+      else if (section === 'explore') renderExplore(main, meta, path, params);
       else if (section === 'playground') await renderPlayground(main, meta, params);
       else if (section === 'datasets') await renderDatasets(main, meta, path[1] ?? 'shop');
       else if (section === 'labs') renderLabs(main, meta, path[1]);

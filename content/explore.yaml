@@ -1,0 +1,693 @@
+# The data behind the Explore diagrams: the engine map, animated flows, the
+# failure catalog with propagation paths, symptom fans and query presets.
+# Validated by joinery/content/explore.py and tests/test_explore.py.
+
+stations:
+  - {id: app, name: Your application, layer: client, x: 110, y: 70, does: Sends SQL and reads results or errors., inside: [Query builders and ORMs, Retries and timeouts], sqlite: Calls the library directly in the same process.}
+  - {id: pool, name: Driver and pool, layer: client, x: 320, y: 70, does: Keeps connections open and lends them out., inside: [Connection reuse, Parameter binding], sqlite: No network; each connection opens the file.}
+  - {id: session, name: Session, layer: client, x: 530, y: 70, does: Holds one connection's state and runs its statements., inside: [Transaction state, Settings and timeouts], sqlite: A database connection object.}
+  - {id: parser, name: Parser, layer: compiler, x: 740, y: 70, does: Turns SQL text into a syntax tree., inside: [Tokenizer, Grammar], sqlite: A Lemon-generated LALR parser.}
+  - {id: binder, name: Binder, layer: compiler, x: 950, y: 70, does: Resolves every name and checks types and semantics., inside: [Name resolution, Aggregate and window rules], sqlite: Part of statement preparation.}
+  - {id: authz, name: Privileges, layer: guard, x: 950, y: 200, does: Checks what this login may read and change., inside: [Grants and roles, Row-level policies], sqlite: An optional authorizer callback; Joinery uses one.}
+  - {id: stats, name: Statistics, layer: compiler, x: 320, y: 200, does: Estimates how many rows each step will produce., inside: [Row counts, Value distributions], sqlite: sqlite_stat1, collected by ANALYZE.}
+  - {id: optimizer, name: Optimizer, layer: compiler, x: 530, y: 200, does: Chooses the cheapest physical plan., inside: [Rewrites, Join order, Index choice], sqlite: The next-generation query planner.}
+  - {id: catalog, name: Catalog, layer: compiler, x: 740, y: 200, does: Knows every table, column, index and constraint., inside: [Schema, Index definitions], sqlite: The sqlite_schema table.}
+  - {id: limits, name: Limits, layer: guard, x: 110, y: 330, does: Stops work that runs too long or uses too much., inside: [Statement timeouts, Memory caps], sqlite: Progress handler and heap limit in Joinery's sandbox.}
+  - {id: memory, name: Work memory, layer: execution, x: 320, y: 330, does: Holds sorts, hashes and intermediate rows., inside: [Sort buffers, Hash tables, Spill files], sqlite: Temporary B-trees, in memory in Joinery.}
+  - {id: executor, name: Executor, layer: execution, x: 530, y: 330, does: Runs the plan and produces rows., inside: [Scans and searches, Joins, Aggregates], sqlite: A bytecode virtual machine.}
+  - {id: constraints, name: Constraints, layer: execution, x: 740, y: 330, does: Rejects rows that break the schema's rules., inside: [NOT NULL and CHECK, UNIQUE, FOREIGN KEY], sqlite: Checked per row as the VM writes.}
+  - {id: locks, name: Locks, layer: execution, x: 950, y: 330, does: Keeps concurrent writers from colliding., inside: [Row and key locks, Waiting and deadlock detection], sqlite: One writer per database file.}
+  - {id: disk, name: Disk, layer: storage, x: 110, y: 460, does: Stores files that survive restarts., inside: [Data files, Log files], sqlite: One database file plus a journal or WAL.}
+  - {id: btree, name: Tables and indexes, layer: storage, x: 320, y: 460, does: Stores rows and index entries in sorted B-trees., inside: [Table B-trees, Index B-trees], sqlite: Every table and index is a B-tree.}
+  - {id: buffer, name: Page cache, layer: storage, x: 530, y: 460, does: Keeps recently used pages in memory., inside: [Cache hits and misses, Dirty pages], sqlite: The pager.}
+  - {id: wal, name: Log, layer: storage, x: 740, y: 460, does: Records changes before they reach the data files., inside: [Write-ahead log, Crash recovery], sqlite: Rollback journal or WAL.}
+  - {id: txn, name: Transactions, layer: execution, x: 950, y: 460, does: Makes groups of changes atomic and isolated., inside: [Commit and rollback, Snapshots], sqlite: Serializable, one writer at a time.}
+
+edges:
+  - [app, pool]
+  - [pool, session]
+  - [session, parser]
+  - [parser, binder]
+  - [binder, authz]
+  - [binder, catalog]
+  - [binder, optimizer]
+  - [optimizer, stats]
+  - [optimizer, catalog]
+  - [optimizer, executor]
+  - [executor, memory]
+  - [executor, constraints]
+  - [constraints, locks]
+  - [executor, buffer]
+  - [buffer, btree]
+  - [btree, disk]
+  - [buffer, wal]
+  - [wal, txn]
+  - [locks, txn]
+  - [memory, disk]
+  - [memory, limits]
+  - [limits, app]
+  - {from: executor, to: session, bend: [330, 200]}
+  - {from: executor, to: locks, bend: [740, 410]}
+
+flows:
+  - id: select
+    title: A SELECT, from text to rows
+    steps:
+      - {at: app, caption: Your code sends a SELECT.}
+      - {from: app, at: pool, caption: The driver lends it a connection.}
+      - {from: pool, at: session, caption: The session receives the text.}
+      - {from: session, at: parser, caption: Text becomes a syntax tree. Typos stop here.}
+      - {from: parser, at: binder, caption: Every name is resolved.}
+      - {from: binder, at: catalog, caption: Tables, columns and indexes are looked up.}
+      - {from: binder, at: authz, caption: Read privileges are checked.}
+      - {from: binder, at: optimizer, caption: The optimizer weighs possible plans.}
+      - {from: optimizer, at: stats, caption: Statistics estimate rows per step.}
+      - {from: optimizer, at: executor, caption: The cheapest plan runs.}
+      - {from: executor, at: buffer, caption: Operators ask for pages.}
+      - {from: buffer, at: btree, caption: Cache misses walk the B-trees.}
+      - {from: btree, at: disk, caption: Missing pages are read from disk.}
+      - {from: executor, at: memory, caption: Sorting and grouping use work memory.}
+      - {from: executor, at: session, caption: Rows stream back.}
+      - {from: session, at: pool, caption: The connection returns to the pool.}
+      - {from: pool, at: app, caption: Your code has its rows.}
+  - id: insert
+    title: An INSERT that commits
+    steps:
+      - {at: app, caption: Your code sends INSERT, then COMMIT.}
+      - {from: app, at: pool, caption: A connection is borrowed.}
+      - {from: pool, at: session, caption: The session receives the statement.}
+      - {from: session, at: parser, caption: It is parsed,}
+      - {from: parser, at: binder, caption: bound,}
+      - {from: binder, at: optimizer, caption: and planned like any statement.}
+      - {from: optimizer, at: executor, caption: The executor builds the new row.}
+      - {from: executor, at: constraints, caption: NOT NULL, CHECK, UNIQUE and FOREIGN KEY are checked.}
+      - {from: constraints, at: locks, caption: The new key is locked against concurrent inserts.}
+      - {from: executor, at: buffer, caption: The row goes into a page in the cache.}
+      - {from: buffer, at: wal, caption: The change is appended to the log first.}
+      - {from: wal, at: txn, caption: COMMIT waits for the log to reach disk.}
+      - {from: txn, at: locks, caption: Locks are released.}
+      - {from: executor, at: session, caption: Success is reported.}
+      - {from: session, at: pool, caption: The connection is returned.}
+      - {from: pool, at: app, caption: The row is durable.}
+  - id: index
+    title: An index turns a scan into a search
+    steps:
+      - {at: optimizer, caption: "WHERE customer_id = 11 reaches the optimizer."}
+      - {from: optimizer, at: catalog, caption: "It finds an index on orders(customer_id)."}
+      - {from: optimizer, at: stats, caption: Statistics say about 4 of 1,798 rows match.}
+      - {from: optimizer, at: executor, caption: "Plan: SEARCH orders USING INDEX."}
+      - {from: executor, at: buffer, caption: The executor descends the index from its root.}
+      - {from: buffer, at: btree, caption: A few page reads instead of every page.}
+      - {from: executor, at: session, caption: Four rows return almost at once.}
+  - id: rollback
+    title: A failing statement inside a transaction
+    steps:
+      - {at: executor, caption: "Inside BEGIN, an UPDATE runs."}
+      - {from: executor, at: constraints, caption: One row breaks a CHECK constraint.}
+      - {from: constraints, at: executor, caption: The statement stops; its changes are undone.}
+      - {from: executor, at: session, caption: The error travels back.}
+      - {from: session, at: pool, caption: The transaction is still open.}
+      - {from: pool, at: app, caption: "Your code chooses: fix and retry, or ROLLBACK."}
+      - {from: locks, at: txn, caption: ROLLBACK discards the transaction and frees its locks.}
+  - id: lock-wait
+    title: Two writers want the same row
+    steps:
+      - {at: locks, caption: Session A updated order 42 and holds its lock.}
+      - {from: executor, at: locks, caption: Session B wants the same row and waits.}
+      - {from: locks, at: txn, caption: If they wait on each other, a deadlock is detected and one aborts.}
+      - {from: executor, at: memory, caption: Otherwise B keeps waiting,}
+      - {from: memory, at: limits, caption: until a lock or statement timeout fires.}
+      - {from: limits, at: app, caption: The timeout reaches your code; waiting requests pile up in the pool.}
+
+failures:
+  # Errors -------------------------------------------------------------------
+  - id: syntax-error
+    title: Syntax error
+    kind: error
+    origin: parser
+    path: [parser, session, pool, app]
+    tell: near "…" syntax error
+    sees: The statement is rejected before anything runs.
+    cause: The text does not fit the grammar, often a stray or missing comma.
+    fix: Read just before the word the message names.
+    patterns: ['syntax error', 'incorrect syntax near', 'error in your sql syntax', 'parser error']
+    messages: {sqlite: 'near "FROM": syntax error', postgres: 'syntax error at or near "FROM"', mysql: "You have an error in your SQL syntax", mssql: "Incorrect syntax near the keyword 'FROM'."}
+    demo: {dataset: shop, sql: "SELECT id, email, FROM customers"}
+  - id: unknown-table
+    title: Unknown table
+    kind: error
+    origin: catalog
+    path: [catalog, binder, parser, session, pool, app]
+    tell: no such table
+    sees: The statement fails before it reads anything.
+    cause: The table name is misspelled, in another schema, or not created yet.
+    fix: Check the schema panel or the search path.
+    patterns: ['no such table', 'relation ".*" does not exist', "table '.*' doesn't exist", 'invalid object name', 'table with name .* does not exist']
+    messages: {sqlite: "no such table: ordrs", postgres: 'relation "ordrs" does not exist', mysql: "Table 'shop.ordrs' doesn't exist", mssql: "Invalid object name 'ordrs'."}
+    demo: {dataset: shop, sql: "SELECT * FROM ordrs"}
+  - id: unknown-column
+    title: Unknown column
+    kind: error
+    origin: catalog
+    path: [catalog, binder, parser, session, pool, app]
+    tell: no such column
+    sees: The statement fails before it reads anything.
+    cause: A misspelled column, a column of a table not in FROM, or a "string" in double quotes.
+    fix: Qualify columns with aliases and put text in single quotes.
+    patterns: ['no such column', 'column ".*" does not exist', 'unknown column', 'invalid column name', 'referenced column .* not found']
+    messages: {sqlite: "no such column: emial", postgres: 'column "emial" does not exist', mysql: "Unknown column 'emial' in 'field list'", mssql: "Invalid column name 'emial'."}
+    demo: {dataset: shop, sql: "SELECT emial FROM customers"}
+  - id: ambiguous-column
+    title: Ambiguous column
+    kind: error
+    origin: binder
+    path: [binder, parser, session, pool, app]
+    tell: ambiguous column name
+    sees: A join query fails at once.
+    cause: Two joined tables both have the column.
+    fix: Prefix it with the table alias.
+    patterns: ['ambiguous column', 'column reference ".*" is ambiguous', 'in field list is ambiguous', 'ambiguous reference to column']
+    messages: {sqlite: "ambiguous column name: id", postgres: 'column reference "id" is ambiguous', mysql: "Column 'id' in field list is ambiguous", mssql: "Ambiguous column name 'id'."}
+    demo: {dataset: shop, sql: "SELECT id FROM orders JOIN customers ON customers.id = orders.customer_id"}
+  - id: aggregate-in-where
+    title: Aggregate in WHERE
+    kind: error
+    origin: binder
+    path: [binder, parser, session, pool, app]
+    tell: misuse of aggregate
+    sees: A query with count() or sum() in WHERE fails.
+    cause: WHERE runs before grouping, so aggregates do not exist yet.
+    fix: Move the condition to HAVING.
+    patterns: ['misuse of aggregate', 'aggregate functions are not allowed in where', 'invalid use of group function', 'an aggregate may not appear in the where clause', 'where clause cannot contain aggregates']
+    messages: {sqlite: "misuse of aggregate: count()", postgres: "aggregate functions are not allowed in WHERE", mysql: "Invalid use of group function", mssql: "An aggregate may not appear in the WHERE clause"}
+    demo: {dataset: shop, sql: "SELECT customer_id FROM orders WHERE count(*) > 3 GROUP BY customer_id"}
+  - id: window-in-where
+    title: Window function in WHERE
+    kind: error
+    origin: binder
+    path: [binder, parser, session, pool, app]
+    tell: misuse of window function
+    sees: Filtering on row_number() fails.
+    cause: Window functions run after WHERE, GROUP BY and HAVING.
+    fix: Compute it in a CTE and filter outside.
+    patterns: ['misuse of window function', 'window functions are not allowed in where', 'windowed functions can only appear in the select or order by']
+    messages: {sqlite: "misuse of window function row_number()", postgres: "window functions are not allowed in WHERE", mssql: "Windowed functions can only appear in the SELECT or ORDER BY clauses."}
+    demo: {dataset: shop, sql: "SELECT id FROM orders WHERE row_number() OVER (ORDER BY id) <= 3"}
+  - id: permission-denied
+    title: Permission denied
+    kind: error
+    origin: authz
+    path: [authz, binder, parser, session, pool, app]
+    tell: not authorized, permission denied
+    sees: The statement is refused before it runs.
+    cause: The login lacks the privilege, or a sandbox forbids the command.
+    fix: Grant the narrowest privilege that works.
+    patterns: ['not authorized', 'authorization denied', 'permission denied', 'command denied to user', 'permission was denied']
+    messages: {sqlite: "not authorized", postgres: "permission denied for table orders", mysql: "SELECT command denied to user 'app'@'%' for table 'orders'", mssql: "The SELECT permission was denied on the object 'orders'"}
+    demo: {dataset: shop, sql: "ATTACH DATABASE 'other.db' AS other"}
+  - id: not-null-violation
+    title: Missing required value
+    kind: error
+    origin: constraints
+    path: [constraints, executor, session, pool, app]
+    tell: NOT NULL constraint failed
+    sees: An INSERT or UPDATE fails while running.
+    cause: A required column got NULL.
+    fix: Supply the value or give the column a default.
+    patterns: ['not null constraint failed', 'violates not-null constraint', "column '.*' cannot be null", 'cannot insert the value null']
+    messages: {sqlite: "NOT NULL constraint failed: products.name", postgres: 'null value in column "name" violates not-null constraint', mysql: "Column 'name' cannot be null", mssql: "Cannot insert the value NULL into column 'name'"}
+    demo: {dataset: shop, sql: "INSERT INTO products (sku, name, category_id, unit_price, cost, launched_on) VALUES ('CF-NEW-250', NULL, 5, 15, 6, '2026-07-01')"}
+  - id: unique-violation
+    title: Duplicate key
+    kind: error
+    origin: constraints
+    path: [constraints, executor, session, pool, app]
+    knock: [[executor, session]]
+    tell: UNIQUE constraint failed
+    sees: The script stops at one statement; the rest never runs.
+    cause: The value already exists in a unique column or key.
+    fix: Upsert with ON CONFLICT, or pick another value.
+    patterns: ['unique constraint failed', 'duplicate key value violates unique constraint', 'duplicate entry', 'violation of (primary|unique) key constraint', 'cannot insert duplicate key']
+    messages: {sqlite: "UNIQUE constraint failed: categories.name", postgres: 'duplicate key value violates unique constraint "uq_categories_name"', mysql: "Duplicate entry 'Coffee' for key 'uq_categories_name'", mssql: "Violation of UNIQUE KEY constraint 'uq_categories_name'."}
+    demo:
+      dataset: shop
+      sql: |
+        BEGIN;
+        UPDATE products SET unit_price = round(unit_price * 1.05, 2) WHERE category_id = 5;
+        INSERT INTO categories (name, parent_id) VALUES ('Coffee', NULL);
+        UPDATE products SET is_active = FALSE WHERE category_id = 7;
+        COMMIT;
+  - id: check-violation
+    title: Rule broken
+    kind: error
+    origin: constraints
+    path: [constraints, executor, session, pool, app]
+    tell: CHECK constraint failed
+    sees: An UPDATE stops part-way and changes nothing.
+    cause: A value breaks a CHECK rule.
+    fix: Change the value, or the rule if the rule is wrong.
+    patterns: ['check constraint failed', 'violates check constraint', 'check constraint .* is violated', 'conflicted with the check constraint']
+    messages: {sqlite: "CHECK constraint failed: ck_order_items_quantity", postgres: 'new row violates check constraint "ck_order_items_quantity"', mysql: "Check constraint 'ck_order_items_quantity' is violated.", mssql: "The UPDATE statement conflicted with the CHECK constraint"}
+    demo: {dataset: shop, sql: "UPDATE order_items SET quantity = 0 WHERE order_id = 1"}
+  - id: foreign-key-violation
+    title: Broken reference
+    kind: error
+    origin: constraints
+    path: [constraints, executor, session, pool, app]
+    tell: FOREIGN KEY constraint failed
+    sees: A DELETE or INSERT fails although the row looks fine.
+    cause: A parent still has children, or a child points at a missing parent.
+    fix: Delete children first, or insert the parent first.
+    patterns: ['foreign key constraint failed', 'violates foreign key constraint', 'cannot (add|delete) or update a (child|parent) row', 'conflicted with the (foreign key|reference) constraint']
+    messages: {sqlite: "FOREIGN KEY constraint failed", postgres: 'update or delete on table "customers" violates foreign key constraint', mysql: "Cannot delete or update a parent row: a foreign key constraint fails", mssql: "The DELETE statement conflicted with the REFERENCE constraint"}
+    demo: {dataset: shop, sql: "DELETE FROM customers WHERE id = 1"}
+  - id: type-mismatch
+    title: Wrong type
+    kind: error
+    origin: executor
+    path: [executor, session, pool, app]
+    tell: cannot store, invalid input syntax
+    sees: A value is refused by a typed column.
+    cause: Text where a number is expected, or a bad date.
+    fix: Convert explicitly with CAST and validate input first.
+    patterns: ['cannot store \w+ value in \w+ column', 'invalid input syntax for type', 'operator does not exist', 'incorrect \w+ value', 'conversion failed when converting', 'could not convert string']
+    messages: {sqlite: "cannot store TEXT value in INTEGER column readings.value", postgres: 'invalid input syntax for type integer: "high"', mysql: "Incorrect integer value: 'high' for column 'value'", mssql: "Conversion failed when converting the varchar value 'high' to data type int."}
+    demo: {dataset: shop, sql: "CREATE TABLE readings (value INTEGER) STRICT;\nINSERT INTO readings VALUES ('high');"}
+  - id: storage-full
+    title: Storage full
+    kind: error
+    origin: btree
+    path: [btree, buffer, executor, session, pool, app]
+    knock: [[btree, disk]]
+    tell: disk is full
+    sees: Writes fail; reads still work.
+    cause: The disk, a size cap or temporary space ran out.
+    fix: Free space, raise the cap, or write less at once.
+    patterns: ['database or disk is full', 'no space left on device', "the table '.*' is full", 'could not extend file', 'filegroup is full']
+    messages: {sqlite: "database or disk is full", postgres: 'could not extend file "base/16384/2619": No space left on device', mysql: "The table 'blobs' is full", mssql: "Could not allocate space for object because the 'PRIMARY' filegroup is full."}
+    demo: {dataset: shop, sql: "CREATE TABLE blobs (b BLOB);\nINSERT INTO blobs WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 20000) SELECT randomblob(4000) FROM r;"}
+  - id: no-transaction
+    title: No transaction open
+    kind: error
+    origin: txn
+    path: [txn, locks, executor, session, pool, app]
+    tell: no transaction is active
+    sees: COMMIT or ROLLBACK fails.
+    cause: There was no BEGIN, or the transaction already ended.
+    fix: Match every BEGIN with exactly one COMMIT or ROLLBACK.
+    patterns: ['no transaction is active', 'there is no transaction in progress', 'cannot start a transaction within a transaction', 'has no corresponding begin transaction']
+    messages: {sqlite: "cannot commit - no transaction is active", postgres: "there is no transaction in progress", mssql: "The COMMIT TRANSACTION request has no corresponding BEGIN TRANSACTION."}
+    demo: {dataset: shop, sql: "COMMIT"}
+  - id: aborted-transaction
+    title: Transaction already failed
+    kind: error
+    origin: txn
+    path: [txn, locks, executor, session, pool, app]
+    knock: [[executor, session]]
+    tell: current transaction is aborted
+    sees: Every statement fails after one earlier error.
+    cause: PostgreSQL refuses all work in a transaction after any error.
+    fix: ROLLBACK, or ROLLBACK TO a savepoint, then retry.
+    patterns: ['current transaction is aborted']
+    messages: {postgres: "current transaction is aborted, commands ignored until end of transaction block"}
+  # Hangs --------------------------------------------------------------------
+  - id: deadlock
+    title: Deadlock
+    kind: hang
+    origin: locks
+    path: [locks, txn]
+    knock: [[locks, executor], [executor, session], [session, pool], [pool, app]]
+    tell: deadlock detected
+    sees: One of two transactions fails after a pause.
+    cause: Each holds a lock the other needs.
+    fix: Touch rows in a consistent order and retry the loser.
+    patterns: ['deadlock detected', 'deadlock found', 'was deadlocked on lock']
+    messages: {postgres: "deadlock detected", mysql: "Deadlock found when trying to get lock; try restarting transaction", mssql: "Transaction (Process ID 61) was deadlocked on lock resources"}
+  - id: lock-timeout
+    title: Lock wait timeout
+    kind: hang
+    origin: locks
+    path: [locks, executor, session, pool, app]
+    knock: [[pool, app]]
+    tell: database is locked, lock wait timeout
+    sees: Writes hang, then fail; the pool runs dry.
+    cause: A long or forgotten transaction holds the lock.
+    fix: Find the blocker, keep transactions short, set lock timeouts.
+    patterns: ['database is locked', 'lock timeout', 'lock wait timeout exceeded', 'lock request time out']
+    messages: {sqlite: "database is locked", postgres: "canceling statement due to lock timeout", mysql: "Lock wait timeout exceeded; try restarting transaction", mssql: "Lock request time out period exceeded."}
+  - id: serialization-failure
+    title: Serialization failure
+    kind: hang
+    origin: txn
+    path: [txn, locks, executor, session, pool, app]
+    tell: could not serialize access
+    sees: A transaction fails only under concurrency.
+    cause: A stricter isolation level aborts rather than allow an anomaly.
+    fix: Retry the whole transaction.
+    patterns: ['could not serialize access', 'snapshot isolation transaction aborted', 'transaction conflict', 'conflict on update', 'serialization failure']
+    messages: {postgres: "could not serialize access due to concurrent update", mssql: "Snapshot isolation transaction aborted due to update conflict.", duckdb: "TransactionContext Error: Conflict on update!"}
+  - id: statement-timeout
+    title: Statement timeout
+    kind: hang
+    origin: executor
+    path: [executor, memory, limits, app]
+    tell: interrupted, statement timeout
+    sees: The query runs until a limit stops it.
+    cause: Runaway work, such as recursion without a stop or a huge join.
+    fix: Add the missing join condition or stopping condition.
+    patterns: ['interrupted', 'statement timeout', 'maximum statement execution time exceeded', 'query timeout expired', 'execution timeout expired', 'the query was stopped after']
+    messages: {sqlite: "interrupted", postgres: "canceling statement due to statement timeout", mysql: "Query execution was interrupted, maximum statement execution time exceeded", mssql: "Execution Timeout Expired."}
+    demo: {dataset: shop, sql: "WITH RECURSIVE r(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r) SELECT count(*) FROM r"}
+  - id: too-many-connections
+    title: Too many connections
+    kind: hang
+    origin: session
+    path: [session, pool, app]
+    tell: too many clients
+    sees: New requests fail or queue while old ones are fine.
+    cause: Connection limits are reached, often by leaked or waiting connections.
+    fix: Use a pool, return connections, and size it to the server.
+    patterns: ['too many clients', 'too many connections', 'remaining connection slots are reserved']
+    messages: {postgres: "sorry, too many clients already", mysql: "Too many connections"}
+  - id: out-of-memory
+    title: Out of memory
+    kind: hang
+    origin: memory
+    path: [memory, limits, app]
+    knock: [[memory, disk]]
+    tell: out of memory
+    sees: Big sorts or joins fail; others are fine.
+    cause: An intermediate result outgrew work memory.
+    fix: Filter and aggregate earlier, or add an index that avoids the sort.
+    patterns: ['out of memory', 'out of shared memory', 'insufficient system memory', 'ran out of memory']
+    messages: {sqlite: "out of memory", postgres: "out of memory", mssql: "There is insufficient system memory in resource pool"}
+  # Slow ---------------------------------------------------------------------
+  - id: missing-index
+    title: Missing index
+    kind: slow
+    origin: optimizer
+    path: [optimizer, executor, buffer, btree, disk]
+    tell: SCAN instead of SEARCH
+    sees: A lookup gets slower as the table grows.
+    cause: No index matches the filter, so every row is read.
+    fix: Index the filtered or joined column.
+    compare:
+      dataset: shop
+      slow: {sql: "SELECT id, ordered_at FROM orders WHERE customer_id = 11"}
+      fast: {sql: "SELECT id, ordered_at FROM orders WHERE customer_id = 11", setup: "CREATE INDEX idx_orders_customer ON orders (customer_id)"}
+  - id: function-on-column
+    title: Function on an indexed column
+    kind: slow
+    origin: optimizer
+    path: [optimizer, executor, buffer, btree]
+    tell: "date(col) = … ignores the index"
+    sees: An index exists but is not used.
+    cause: Wrapping the column in a function hides it from the index.
+    fix: Compare the bare column with a range.
+    compare:
+      dataset: shop
+      slow: {sql: "SELECT id FROM orders WHERE date(ordered_at) = '2026-06-15'"}
+      fast: {sql: "SELECT id FROM orders WHERE ordered_at >= '2026-06-15' AND ordered_at < '2026-06-16'"}
+  - id: correlated-subquery
+    title: Subquery per row
+    kind: slow
+    origin: executor
+    path: [executor, buffer, btree]
+    tell: CORRELATED SCALAR SUBQUERY
+    sees: Time grows with rows times rows.
+    cause: A subquery reruns for every outer row and, with no supporting index, scans the table each time.
+    fix: Aggregate once and join, or index the correlated column.
+    compare:
+      dataset: shop
+      slow: {sql: "SELECT c.id, (SELECT count(*) FROM orders AS o WHERE o.customer_id = c.id) AS orders FROM customers AS c", setup: "PRAGMA automatic_index = OFF"}
+      fast: {sql: "SELECT c.id, coalesce(o.orders, 0) AS orders FROM customers AS c LEFT JOIN (SELECT customer_id, count(*) AS orders FROM orders GROUP BY customer_id) AS o ON o.customer_id = c.id"}
+  - id: cartesian-join
+    title: Missing join condition
+    kind: slow
+    origin: executor
+    path: [executor, memory, limits, app]
+    tell: rows multiply
+    sees: Huge row counts, then a timeout.
+    cause: Every row pairs with every row.
+    fix: Join with ON on the related keys.
+    compare:
+      dataset: shop
+      slow: {sql: "SELECT count(*) FROM orders, customers"}
+      fast: {sql: "SELECT count(*) FROM orders JOIN customers ON customers.id = orders.customer_id"}
+  - id: sort-without-index
+    title: Sorting without an index
+    kind: slow
+    origin: memory
+    path: [memory, executor, session]
+    knock: [[memory, disk]]
+    tell: USE TEMP B-TREE FOR ORDER BY
+    sees: Even LIMIT 10 is slow on a big table.
+    cause: Every row is sorted before the first is returned.
+    fix: Index the sort column.
+    compare:
+      dataset: shop
+      slow: {sql: "SELECT id, shipped_at FROM orders ORDER BY shipped_at LIMIT 10"}
+      fast: {sql: "SELECT id, shipped_at FROM orders ORDER BY shipped_at LIMIT 10", setup: "CREATE INDEX idx_orders_shipped ON orders (shipped_at)"}
+  - id: stale-statistics
+    title: Stale statistics
+    kind: slow
+    origin: stats
+    path: [stats, optimizer, executor]
+    tell: estimated rows far from actual
+    sees: A query turns slow after data grew, with no code change.
+    cause: Outdated statistics mislead the optimizer.
+    fix: Run ANALYZE and let automatic statistics catch up.
+  # Wrong results -------------------------------------------------------------
+  - id: null-comparison
+    title: Comparing with NULL
+    kind: wrong
+    origin: executor
+    path: [executor, session, pool, app]
+    tell: "= NULL returns nothing"
+    sees: A filter returns no rows, silently.
+    cause: "= NULL is never true; NULL means unknown."
+    fix: Use IS NULL or IS NOT NULL.
+    compare:
+      dataset: shop
+      slow: {label: Wrong, sql: "SELECT count(*) AS customers FROM customers WHERE city = NULL"}
+      fast: {label: Right, sql: "SELECT count(*) AS customers FROM customers WHERE city IS NULL"}
+  - id: not-in-null
+    title: NOT IN with a NULL
+    kind: wrong
+    origin: executor
+    path: [executor, session, pool, app]
+    tell: NOT IN returns zero rows
+    sees: An anti join returns nothing.
+    cause: One NULL in the list makes every NOT IN unknown.
+    fix: Use NOT EXISTS.
+    compare:
+      dataset: shop
+      slow: {label: Wrong, sql: "SELECT count(*) AS customers FROM customers WHERE id NOT IN (SELECT referred_by FROM customers)"}
+      fast: {label: Right, sql: "SELECT count(*) AS customers FROM customers AS c WHERE NOT EXISTS (SELECT 1 FROM customers AS r WHERE r.referred_by = c.id)"}
+  - id: left-join-where
+    title: Filtered LEFT JOIN
+    kind: wrong
+    origin: optimizer
+    path: [optimizer, executor, session, pool, app]
+    tell: unmatched rows vanish
+    sees: A LEFT JOIN loses rows like an inner join.
+    cause: A WHERE condition on the right table rejects the NULL padding.
+    fix: Move the condition into ON.
+    compare:
+      dataset: joinlab
+      slow: {label: Wrong, sql: "SELECT t.name AS team, p.name AS keeper FROM teams AS t LEFT JOIN players AS p ON p.team_id = t.id WHERE p.role = 'keeper'"}
+      fast: {label: Right, sql: "SELECT t.name AS team, p.name AS keeper FROM teams AS t LEFT JOIN players AS p ON p.team_id = t.id AND p.role = 'keeper'"}
+  - id: join-fan-out
+    title: Join fan-out
+    kind: wrong
+    origin: executor
+    path: [executor, session, pool, app]
+    knock: [[executor, memory]]
+    tell: sums too large
+    sees: Totals are inflated.
+    cause: Joining two one-to-many tables repeats each row.
+    fix: Aggregate each child table before joining.
+    compare:
+      dataset: shop
+      slow: {label: Wrong, sql: "SELECT o.id, sum(p.amount) AS paid FROM orders AS o JOIN order_items AS i ON i.order_id = o.id JOIN payments AS p ON p.order_id = o.id WHERE o.id <= 5 GROUP BY o.id"}
+      fast: {label: Right, sql: "SELECT o.id, (SELECT sum(amount) FROM payments AS p WHERE p.order_id = o.id) AS paid FROM orders AS o WHERE o.id <= 5"}
+  - id: integer-division
+    title: Integer division
+    kind: wrong
+    origin: executor
+    path: [executor, session, pool, app]
+    tell: ratios round down to whole numbers
+    sees: Averages and rates come out as whole numbers.
+    cause: Integer divided by integer truncates.
+    fix: Multiply by 1.0 or CAST first.
+    compare:
+      dataset: shop
+      slow: {label: Wrong, sql: "SELECT count(*) / count(DISTINCT order_id) AS lines_per_order FROM order_items"}
+      fast: {label: Right, sql: "SELECT round(count(*) * 1.0 / count(DISTINCT order_id), 2) AS lines_per_order FROM order_items"}
+  - id: division-by-zero
+    title: Silent division by zero
+    kind: wrong
+    origin: executor
+    path: [executor, session, pool, app]
+    tell: NULL instead of an error
+    sees: A ratio is NULL in SQLite and MySQL but fails in PostgreSQL.
+    cause: Engines disagree on dividing by zero.
+    fix: Guard with NULLIF(divisor, 0) and decide what zero means.
+    patterns: ['division by zero', 'divide by zero error']
+    messages: {sqlite: "(returns NULL)", postgres: "division by zero", mysql: "(returns NULL with a warning)", mssql: "Divide by zero error encountered."}
+    demo: {dataset: shop, sql: "SELECT 10 / 0 AS result, 10 / NULLIF(0, 0) AS guarded"}
+
+symptoms:
+  - {id: fails, title: It fails with an error, failures: [syntax-error, unknown-table, unknown-column, ambiguous-column, aggregate-in-where, permission-denied, unique-violation, check-violation, foreign-key-violation, type-mismatch, no-transaction]}
+  - {id: slow, title: It is slow, failures: [missing-index, function-on-column, correlated-subquery, cartesian-join, sort-without-index, stale-statistics]}
+  - {id: hangs, title: It hangs, then times out, failures: [lock-timeout, deadlock, statement-timeout, too-many-connections, serialization-failure, out-of-memory]}
+  - {id: wrong, title: The numbers look wrong, failures: [null-comparison, not-in-null, left-join-where, join-fan-out, integer-division, division-by-zero]}
+
+queries:
+  - id: country-orders
+    title: Top countries by delivered orders
+    dataset: shop
+    sql: |
+      SELECT c.country, count(*) AS orders
+      FROM orders AS o
+      JOIN customers AS c ON c.id = o.customer_id
+      WHERE o.status = 'delivered'
+      GROUP BY c.country
+      HAVING count(*) > 20
+      ORDER BY orders DESC
+      LIMIT 5;
+  - id: spend-tiers
+    title: Spend tiers from chained CTEs
+    dataset: shop
+    sql: |
+      WITH order_totals AS (
+        SELECT order_id, sum(quantity * unit_price - discount) AS total
+        FROM order_items
+        GROUP BY order_id
+      ),
+      customer_spend AS (
+        SELECT o.customer_id, sum(t.total) AS spend
+        FROM orders AS o
+        JOIN order_totals AS t ON t.order_id = o.id
+        WHERE o.status = 'delivered'
+        GROUP BY o.customer_id
+      )
+      SELECT CASE WHEN spend >= 500 THEN 'gold' WHEN spend >= 200 THEN 'silver' ELSE 'bronze' END AS tier,
+             count(*) AS customers
+      FROM customer_spend
+      GROUP BY tier;
+  - id: never-ordered
+    title: Customers who never ordered
+    dataset: shop
+    sql: |
+      SELECT c.id, c.email
+      FROM customers AS c
+      WHERE NOT EXISTS (SELECT 1 FROM orders AS o WHERE o.customer_id = c.id);
+  - id: per-customer
+    title: A subquery per customer
+    dataset: shop
+    sql: |
+      SELECT c.id,
+             (SELECT count(*) FROM orders AS o WHERE o.customer_id = c.id) AS orders
+      FROM customers AS c
+      WHERE c.country = 'GB';
+  - id: top-products
+    title: Two priciest products per category
+    dataset: shop
+    sql: |
+      WITH ranked AS (
+        SELECT category_id, name, unit_price,
+               row_number() OVER (PARTITION BY category_id ORDER BY unit_price DESC, id) AS rn
+        FROM products
+      )
+      SELECT category_id, name, unit_price FROM ranked WHERE rn <= 2;
+  - id: org-chart
+    title: The org chart, recursively
+    dataset: shop
+    sql: |
+      WITH RECURSIVE chain(id, name, depth) AS (
+        SELECT id, first_name, 0 FROM employees WHERE manager_id IS NULL
+        UNION ALL
+        SELECT e.id, e.first_name, c.depth + 1 FROM employees AS e JOIN chain AS c ON e.manager_id = c.id
+      )
+      SELECT depth, count(*) AS people FROM chain GROUP BY depth;
+  - id: campaigns
+    title: Sessions per campaign from JSON
+    dataset: analytics
+    sql: |
+      SELECT c.name, count(DISTINCT e.session_id) AS sessions
+      FROM campaigns AS c
+      JOIN events AS e ON e.properties ->> '$.utm_campaign' = c.name
+      GROUP BY c.name
+      ORDER BY sessions DESC;
+  - id: latest-versions
+    title: Latest version of each raw order
+    dataset: pipeline
+    sql: |
+      WITH ranked AS (
+        SELECT order_ref, load_id, lower(trim(status)) AS status,
+               row_number() OVER (PARTITION BY order_ref ORDER BY load_id DESC, row_no DESC) AS rn
+        FROM raw_orders
+      )
+      SELECT status, count(*) AS orders FROM ranked WHERE rn = 1 GROUP BY status;
+  - id: broken-cte
+    title: An error inside a CTE
+    dataset: shop
+    sql: |
+      WITH paid AS (
+        SELECT order_id, sum(amount) AS paid FROM payments WHERE status = 'captured' GROUP BY order_id
+      ),
+      late AS (
+        SELECT id FROM orders WHERE delivred_at > date(ordered_at, '+7 days')
+      ),
+      late_paid AS (
+        SELECT p.paid FROM paid AS p JOIN late AS l ON l.id = p.order_id
+      )
+      SELECT count(*) AS late_orders, round(sum(paid), 2) AS revenue FROM late_paid;
+
+presets:
+  journey: |
+    SELECT c.country, count(*) AS orders
+    FROM orders AS o
+    JOIN customers AS c ON c.id = o.customer_id
+    WHERE o.ordered_at >= '2026-01-01'
+    GROUP BY c.country
+    ORDER BY orders DESC;
+  processing:
+    - [SELECT, "c.country, count(*) AS orders", 5]
+    - [FROM, "orders AS o JOIN customers AS c ON c.id = o.customer_id", 1]
+    - [WHERE, "o.status = 'delivered'", 2]
+    - [GROUP BY, "c.country", 3]
+    - [HAVING, "count(*) > 20", 4]
+    - [ORDER BY, "orders DESC", 6]
+    - [LIMIT, "5", 7]
+  playground:
+    shop: "SELECT c.country, count(*) AS orders, round(sum(p.amount), 2) AS revenue\nFROM orders AS o\nJOIN customers AS c ON c.id = o.customer_id\nJOIN payments AS p ON p.order_id = o.id AND p.status = 'captured'\nGROUP BY c.country\nORDER BY revenue DESC;"
+    bank: "SELECT m.category, count(*) AS purchases, round(-sum(t.amount), 2) AS spent\nFROM transactions AS t\nJOIN merchants AS m ON m.id = t.merchant_id\nWHERE t.kind = 'card'\nGROUP BY m.category\nORDER BY spent DESC;"
+    analytics: "SELECT name, count(*) AS events, count(DISTINCT user_id) AS users\nFROM events\nGROUP BY name\nORDER BY events DESC;"
+    pipeline: "SELECT load_id, count(*) AS rows_received, count(DISTINCT order_ref) AS distinct_orders\nFROM raw_orders\nGROUP BY load_id;"
+    joinlab: "SELECT p.name AS player, t.name AS team\nFROM players AS p\nLEFT JOIN teams AS t ON t.id = p.team_id;"
+  join_lab:
+    players: SELECT id, name, team_id, role FROM players ORDER BY id
+    teams: SELECT id, name, city FROM teams ORDER BY id
+    sql:
+      inner: "SELECT p.name AS player, t.name AS team\nFROM players AS p\nJOIN teams AS t ON t.id = p.team_id;"
+      left: "SELECT p.name AS player, t.name AS team\nFROM players AS p\nLEFT JOIN teams AS t ON t.id = p.team_id;"
+      right: "SELECT p.name AS player, t.name AS team\nFROM players AS p\nRIGHT JOIN teams AS t ON t.id = p.team_id;"
+      full: "SELECT p.name AS player, t.name AS team\nFROM players AS p\nFULL JOIN teams AS t ON t.id = p.team_id;"
+      cross: "SELECT p.name AS player, t.name AS team\nFROM players AS p\nCROSS JOIN teams AS t;"
+      semi: "SELECT t.name AS team\nFROM teams AS t\nWHERE EXISTS (SELECT 1 FROM players AS p WHERE p.team_id = t.id);"
+      anti: "SELECT t.name AS team\nFROM teams AS t\nWHERE NOT EXISTS (SELECT 1 FROM players AS p WHERE p.team_id = t.id);"
+    notes:
+      inner: Only pairs that satisfy the ON condition.
+      left: Every player; no team means NULL team columns.
+      right: Every team; no players means NULL player columns.
+      full: Matched pairs plus the unmatched rows of both sides.
+      cross: Every player with every team, 7 × 4 = 28 rows.
+      semi: Teams with at least one player, each listed once.
+      anti: Teams with no players.
+  index_lab:
+    - {title: "One customer's orders", table: orders, columns: [customer_id, status, ordered_at, channel], sql: "SELECT id, ordered_at, status\nFROM orders\nWHERE customer_id = 11"}
+    - {title: Refunds this year by date, table: orders, columns: [status, ordered_at, channel, customer_id], sql: "SELECT id, ordered_at\nFROM orders\nWHERE status = 'refunded' AND ordered_at >= '2026-01-01'\nORDER BY ordered_at"}
+    - {title: PayPal payments in June, table: payments, columns: [method, paid_at, order_id, amount], sql: "SELECT id, amount\nFROM payments\nWHERE method = 'paypal' AND paid_at >= '2026-06-01'"}
+    - {title: Ratings for one product, table: reviews, columns: [product_id, rating, customer_id], sql: "SELECT rating, count(*) AS reviews\nFROM reviews\nWHERE product_id = 19\nGROUP BY rating"}

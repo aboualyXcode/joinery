@@ -22,7 +22,7 @@ sections:
       - *self-referencing*: `employees.manager_id` and `categories.parent_id` point into their own table
 
       Hover over a table in the diagram to highlight its relationships.
-    widget: {type: erd}
+    widget: {type: relationships}
     examples:
       - id: schema-ddl
         title: How the tables were created

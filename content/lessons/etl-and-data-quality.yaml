@@ -70,6 +70,7 @@ sections:
           ORDER BY problem IS NULL, problem, row_no
           LIMIT 30;
   - title: Deduplicating
+    widget: {type: query-map, preset: latest-versions}
     body: |
       Sources resend rows. Number the versions of each key with `row_number()`, ordered so the version
       you trust most comes first (here the latest load, then the latest row), and keep number one.

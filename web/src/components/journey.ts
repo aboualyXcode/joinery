@@ -1,6 +1,7 @@
 // The query journey: what each stage of the engine produces for one query.
 import { api } from '../api.ts';
 import { h, mount } from '../lib/dom.ts';
+import { exploreData } from '../lib/explore.ts';
 import { formatMs, formatNumber, formatSteps, plural } from '../lib/format.ts';
 import { tokenize } from '../lib/sql.ts';
 import type { DatasetDetail, ExplainResponse, Meta, StepsResponse } from '../types.ts';
@@ -8,13 +9,6 @@ import { createEditor } from './editor.ts';
 import { flattenPlan, renderBytecode, renderPlan } from './plan.ts';
 import { renderError } from './results.ts';
 import { requestError } from './workbench.ts';
-
-const DEFAULT_SQL = `SELECT c.country, count(*) AS orders
-FROM orders AS o
-JOIN customers AS c ON c.id = o.customer_id
-WHERE o.ordered_at >= '2026-01-01'
-GROUP BY c.country
-ORDER BY orders DESC;`;
 
 const STAGES = [
   { id: 'parser', name: 'Parser', text: 'Splits the text into tokens and checks them against the grammar, producing a syntax tree. Misspelled keywords and missing commas fail here.' },
@@ -71,7 +65,7 @@ export function renderJourney(meta: Meta): HTMLElement {
   let trace: Trace | null = null;
   let current = 0;
   const panel = h('div', { class: 'journey-panel', 'aria-live': 'polite' });
-  const editor = createEditor({ value: DEFAULT_SQL, label: 'Query to trace', minLines: 4, maxLines: 14, onRun: () => void run() });
+  const editor = createEditor({ value: exploreData().presets.journey, label: 'Query to trace', minLines: 4, maxLines: 14, onRun: () => void run() });
   const datasetSelect = h('select', {
     'aria-label': 'Dataset', on: { change: (e: Event) => { dataset = (e.target as HTMLSelectElement).value; } },
   }, meta.datasets.map((d) => h('option', { value: d.id }, d.title)));

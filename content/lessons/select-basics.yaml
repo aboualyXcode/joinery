@@ -12,6 +12,7 @@ objectives:
   - Remove duplicate rows with `DISTINCT`
 sections:
   - title: Your first query
+    widget: {type: engine-map, flow: select}
     body: |
       A relational database stores data in **tables**: named sets of rows that all share the same columns.
       `SELECT` lists the columns you want and `FROM` names the table to read.

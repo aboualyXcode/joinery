@@ -51,6 +51,7 @@ sections:
           ORDER BY id
           LIMIT 10;
   - title: Correlated subqueries
+    widget: {type: query-map, preset: per-customer}
     body: |
       A **correlated** subquery refers to the outer row, so conceptually it runs once per outer row.
       Optimizers often rewrite them into joins, but not always; the plan tab shows what happened.

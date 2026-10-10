@@ -4,7 +4,7 @@ import { formatMs, formatNumber, formatSteps, plural } from '../lib/format.ts';
 import type { ExplainResponse, PlanNode } from '../types.ts';
 import { renderError } from './results.ts';
 
-const KIND_LABEL: Record<string, string> = {
+export const KIND_LABEL: Record<string, string> = {
   scan: 'Full scan', 'index-scan': 'Index scan', search: 'Index search', 'auto-index': 'Temporary index',
   sort: 'Sort', correlated: 'Runs per row', subquery: 'Subquery', materialize: 'Materialized',
   coroutine: 'Co-routine', compound: 'Compound', constant: 'Constant row', bloom: 'Bloom filter', join: 'Join',

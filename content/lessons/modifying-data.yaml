@@ -12,6 +12,7 @@ objectives:
   - Write an upsert with `ON CONFLICT`, `ON DUPLICATE KEY` or `MERGE`
 sections:
   - title: INSERT
+    widget: {type: engine-map, flow: insert}
     body: |
       Always name the columns you insert into: the statement keeps working when columns are added, and
       omitted columns get their `DEFAULT` (or NULL). An `INTEGER PRIMARY KEY` in SQLite, an identity

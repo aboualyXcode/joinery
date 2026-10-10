@@ -1,5 +1,9 @@
 import { api } from '../api.ts';
-import { renderErd } from '../components/erd.ts';
+import { renderErd, renderRelationships } from '../components/erd.ts';
+import { renderEngineExplorer } from '../components/enginemap.ts';
+import { renderFailureExplorer } from '../components/failures.ts';
+import { renderQueryExplorer } from '../components/queryflow.ts';
+import { exploreData } from '../lib/explore.ts';
 import { renderExample } from '../components/example.ts';
 import { renderExercise } from '../components/exercise.ts';
 import { renderIndexLab } from '../components/indexlab.ts';
@@ -38,8 +42,12 @@ function rail(modules: Module[], current: string | null): HTMLElement {
     })))));
 }
 
-function widget(type: string, lesson: Lesson, meta: Meta): HTMLElement {
-  switch (type) {
+function widget(def: NonNullable<Section['widget']>, lesson: Lesson, meta: Meta): HTMLElement {
+  switch (def.type) {
+    case 'engine-map': return renderEngineExplorer(exploreData(), { flow: def.flow, compact: true });
+    case 'failure-map': return renderFailureExplorer(exploreData(), { symptom: def.symptom, initial: def.failure, matcher: false });
+    case 'query-map': return renderQueryExplorer({ preset: def.preset, pickers: false });
+    case 'relationships': return renderRelationships(lesson.dataset);
     case 'join-visualizer': return renderJoinVisualizer();
     case 'isolation-simulator': return renderIsolationSimulator();
     case 'index-lab': return renderIndexLab();
@@ -53,7 +61,7 @@ function widget(type: string, lesson: Lesson, meta: Meta): HTMLElement {
       return holder;
     }
     default:
-      return h('p', { class: 'muted' }, `Unknown widget: ${type}`);
+      return h('p', { class: 'muted' }, `Unknown widget: ${def.type}`);
   }
 }
 
@@ -61,7 +69,7 @@ function renderSection(section: Section, lesson: Lesson, meta: Meta): HTMLElemen
   return h('section', { class: 'lesson-section' },
     h('h2', null, section.title),
     section.html ? h('div', { class: 'prose', html: section.html }) : null,
-    section.widget ? h('div', { class: 'widget' }, widget(section.widget.type, lesson, meta)) : null,
+    section.widget ? h('div', { class: 'widget' }, widget(section.widget, lesson, meta)) : null,
     section.examples.map((example) => renderExample(example, meta)));
 }
 

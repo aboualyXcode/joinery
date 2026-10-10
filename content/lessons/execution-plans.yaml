@@ -12,6 +12,7 @@ objectives:
   - Use statistics to explain estimates
 sections:
   - title: Reading a SQLite plan
+    widget: {type: query-map, preset: never-ordered}
     body: |
       A plan is a tree. Children run inside their parent, and siblings that read tables are nested
       loops, outermost first. The labels to know:

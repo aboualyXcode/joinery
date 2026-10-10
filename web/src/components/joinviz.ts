@@ -2,9 +2,8 @@
 import { api } from '../api.ts';
 import { h, mount, s } from '../lib/dom.ts';
 import { plural } from '../lib/format.ts';
-import {
-  computeJoin, JOIN_NOTES, JOIN_SQL, survivors, type JoinRow, type JoinType, type Player, type Team,
-} from '../lib/joins.ts';
+import { exploreData } from '../lib/explore.ts';
+import { computeJoin, survivors, type JoinRow, type JoinType, type Player, type Team } from '../lib/joins.ts';
 import { highlightHTML } from '../lib/sql.ts';
 import { renderError, renderTable } from './results.ts';
 import { requestError } from './workbench.ts';
@@ -21,12 +20,13 @@ export function renderJoinVisualizer(): HTMLElement {
 }
 
 async function load(root: HTMLElement): Promise<void> {
+  const lab = exploreData().presets.join_lab;
   let players: Player[];
   let teams: Team[];
   try {
     const [p, t] = await Promise.all([
-      api.run({ sql: 'SELECT id, name, team_id, role FROM players ORDER BY id', dataset: 'joinlab' }),
-      api.run({ sql: 'SELECT id, name, city FROM teams ORDER BY id', dataset: 'joinlab' }),
+      api.run({ sql: lab.players, dataset: 'joinlab' }),
+      api.run({ sql: lab.teams, dataset: 'joinlab' }),
     ]);
     const pr = p.statements[0];
     const tr = t.statements[0];
@@ -100,8 +100,8 @@ async function load(root: HTMLElement): Promise<void> {
       row.classList.toggle('kept', kept.teams.has(id));
       row.classList.toggle('removed', !kept.teams.has(id));
     });
-    note.textContent = JOIN_NOTES[type];
-    code.innerHTML = highlightHTML(JOIN_SQL[type]);
+    note.textContent = lab.notes[type] ?? '';
+    code.innerHTML = highlightHTML(lab.sql[type] ?? '');
     const columns = teamOnly ? ['team'] : ['player', 'team'];
     const table = rows.map((r) => teamOnly ? [r.team?.name ?? null] : [r.player?.name ?? null, r.team?.name ?? null]);
     mount(resultArea, h('h4', null, `Result: ${plural(rows.length, 'row')}`), renderTable(columns, table, { caption: 'Join result' }));
@@ -115,7 +115,7 @@ async function load(root: HTMLElement): Promise<void> {
       click: async () => {
         runButton.disabled = true;
         try {
-          const result = await api.run({ sql: JOIN_SQL[type], dataset: 'joinlab' });
+          const result = await api.run({ sql: lab.sql[type] ?? '', dataset: 'joinlab' });
           const statement = result.statements[0];
           if (!statement || statement.error) {
             mount(engineArea, renderError(statement?.error ?? result.error ?? requestError('No result')));

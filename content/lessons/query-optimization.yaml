@@ -12,6 +12,7 @@ objectives:
   - Recognize OFFSET pagination, SELECT *, OR chains and N+1 queries
 sections:
   - title: Measure first
+    widget: {type: failure-map, symptom: slow}
     body: |
       Optimizing without measuring is guessing. Look at the plan, then at the work done: Joinery reports
       elapsed time and SQLite virtual machine steps for every explained query. Work counts are steadier

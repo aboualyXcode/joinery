@@ -30,6 +30,7 @@ sections:
         portable: true
         mode: steps
   - title: Ranking and top N per group
+    widget: {type: query-map, preset: top-products}
     body: |
       `row_number()` numbers rows 1, 2, 3 within each partition. `rank()` gives ties the same number and
       leaves gaps (1, 1, 3); `dense_rank()` does not leave gaps (1, 1, 2). Ranking inside a CTE, then

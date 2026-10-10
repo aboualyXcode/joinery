@@ -1,26 +1,15 @@
 // The index lab: build an index column by column and compare the plans.
 import { api } from '../api.ts';
 import { h, mount } from '../lib/dom.ts';
+import { exploreData } from '../lib/explore.ts';
 import { formatSteps } from '../lib/format.ts';
 import { highlightHTML } from '../lib/sql.ts';
 import { flattenPlan, renderPlan } from './plan.ts';
 import { renderError } from './results.ts';
 import { requestError } from './workbench.ts';
 
-interface Preset { title: string; table: string; sql: string; columns: string[] }
-
-const PRESETS: Preset[] = [
-  { title: "One customer's orders", table: 'orders', columns: ['customer_id', 'status', 'ordered_at', 'channel'],
-    sql: 'SELECT id, ordered_at, status\nFROM orders\nWHERE customer_id = 11' },
-  { title: 'Refunds this year, by date', table: 'orders', columns: ['status', 'ordered_at', 'channel', 'customer_id'],
-    sql: "SELECT id, ordered_at\nFROM orders\nWHERE status = 'refunded' AND ordered_at >= '2026-01-01'\nORDER BY ordered_at" },
-  { title: 'PayPal payments in June', table: 'payments', columns: ['method', 'paid_at', 'order_id', 'amount'],
-    sql: "SELECT id, amount\nFROM payments\nWHERE method = 'paypal' AND paid_at >= '2026-06-01'" },
-  { title: 'Ratings for one product', table: 'reviews', columns: ['product_id', 'rating', 'customer_id'],
-    sql: 'SELECT rating, count(*) AS reviews\nFROM reviews\nWHERE product_id = 19\nGROUP BY rating' },
-];
-
 export function renderIndexLab(): HTMLElement {
+  const PRESETS = exploreData().presets.index_lab;
   let preset = PRESETS[0];
   let chosen: string[] = [];
   const code = h('code');

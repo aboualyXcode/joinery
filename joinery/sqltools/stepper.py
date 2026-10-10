@@ -649,4 +649,4 @@ def assemble(plan: StepPlan, run_output: dict) -> dict:
 def _stage_json(stage: Stage, query: str, columns: list, rows: list, row_count: int, res: dict) -> dict:
     return {"id": stage.id, "clause": stage.clause, "title": stage.title, "sql": query, "columns": columns,
             "rows": rows, "row_count": row_count, "truncated": len(rows) < row_count,
-            "elapsed_ms": res.get("elapsed_ms"), "error": None}
+            "elapsed_ms": res.get("elapsed_ms"), "vm_steps": res.get("vm_steps"), "error": None}

@@ -42,6 +42,7 @@ sections:
             SELECT id, occurred_at, properties ->> '$.query' AS query, properties ->> '$.results' AS results
             FROM events WHERE name = 'search' LIMIT 10;
   - title: Filtering and grouping on JSON fields
+    widget: {type: query-map, preset: campaigns}
     body: |
       Extracted values behave like any other expression, so they can be filtered, grouped and joined.
       Campaign attribution joins the `utm_campaign` property to the campaigns table.

@@ -74,6 +74,16 @@ def _provision(args: argparse.Namespace) -> int:
     return 0
 
 
+def _snapshot(args: argparse.Namespace) -> int:
+    from .app import create_app
+    from .snapshot import record
+
+    settings = Settings.from_env().with_overrides(engines=("sqlite",), rate_limit=0, max_rows=args.max_rows)
+    stats = record(create_app(settings), Path(args.out), include_examples=not args.no_examples)
+    print(f"recorded {stats['files']} responses, {stats['bytes'] / 1_048_576:.1f} MiB, into {args.out}")
+    return 0
+
+
 def _doctor(_args: argparse.Namespace) -> int:
     import importlib.util
 
@@ -125,10 +135,15 @@ def main(argv: list[str] | None = None) -> int:
     provision.add_argument("--admin-dsn", required=True)
     provision.add_argument("--sandbox-password")
     provision.set_defaults(handler=_provision)
+    snapshot = sub.add_parser("snapshot", help="record API responses for the static preview")
+    snapshot.add_argument("--out", required=True)
+    snapshot.add_argument("--max-rows", type=int, default=60)
+    snapshot.add_argument("--no-examples", action="store_true", help="skip the lesson examples")
+    snapshot.set_defaults(handler=_snapshot)
     doctor = sub.add_parser("doctor", help="check the environment")
     doctor.set_defaults(handler=_doctor)
     args = parser.parse_args(argv)
-    level = logging.WARNING if args.command == "validate" else logging.INFO
+    level = logging.WARNING if args.command in ("validate", "snapshot") else logging.INFO
     logging.basicConfig(level=level, format="%(levelname)s %(name)s: %(message)s")
     return args.handler(args)
 

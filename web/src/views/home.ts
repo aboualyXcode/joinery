@@ -1,5 +1,7 @@
 import { api } from '../api.ts';
+import { createEngineMap, legend } from '../components/enginemap.ts';
 import { renderProcessingOrder } from '../components/order.ts';
+import { exploreData, hasExplore } from '../lib/explore.ts';
 import { h, mount } from '../lib/dom.ts';
 import { formatNumber, plural } from '../lib/format.ts';
 import { store } from '../lib/store.ts';
@@ -32,6 +34,14 @@ export async function renderHome(target: HTMLElement, meta: Meta): Promise<void>
           h('a', { class: 'button primary', href: href(`learn/${first}`) }, 'Start the first lesson'),
           h('a', { class: 'button', href: href('playground') }, 'Open the playground'))),
       renderProcessingOrder(true)),
+    hasExplore() ? h('section', { class: 'home-section engine-teaser' },
+      h('h2', null, 'See inside the engine'),
+      h('p', { class: 'lede' }, 'Nineteen components, from your driver to the disk. Follow a query through them, watch an error travel back, or map your own SQL.'),
+      h('p', { class: 'actions' },
+        h('a', { class: 'button primary', href: href('explore/flows/select') }, 'Follow a SELECT'),
+        h('a', { class: 'button', href: href('explore/failures') }, 'Trace a failure'),
+        h('a', { class: 'button', href: href('explore/query') }, 'Map a query')),
+      createEngineMap(exploreData(), (station) => { location.hash = href('explore/map'); void station; }).element, legend()) : null,
     h('section', { class: 'home-section' },
       h('h2', null, 'The course'),
       h('ol', { class: 'module-list' }, modules.map((module) => {

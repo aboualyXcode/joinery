@@ -108,6 +108,7 @@ export interface Stage {
   kept_count: number | null;
   input_count: number | null;
   description: string;
+  vm_steps?: number | null;
   error: EngineError | null;
 }
 
@@ -161,6 +162,7 @@ export interface Meta {
   engines: EngineInfo[];
   datasets: DatasetSummary[];
   limits: { timeout_ms: number; max_rows: number; max_sql_chars: number };
+  static?: boolean;
 }
 
 export interface LessonSummary {
@@ -197,7 +199,7 @@ export interface Section {
   title: string;
   html: string;
   examples: Example[];
-  widget: { type: string } | null;
+  widget: { type: string; flow?: string; symptom?: string; failure?: string; preset?: string } | null;
 }
 
 export interface Exercise {
@@ -268,4 +270,91 @@ export interface DialectReference {
   engines: { id: string; name: string; release: string; status: string; driver: string; docs: string }[];
   standard: string;
   features: { id: string; name: string; standard: string; support: Record<string, FeatureSupport> }[];
+}
+
+export interface Station {
+  id: string;
+  name: string;
+  layer: 'client' | 'compiler' | 'execution' | 'storage' | 'guard';
+  x: number;
+  y: number;
+  does: string;
+  inside: string[];
+  sqlite: string;
+}
+
+export interface MapEdge { from: string; to: string; bend: [number, number] | null }
+export interface FlowStep { at: string; from?: string; caption: string }
+export interface Flow { id: string; title: string; steps: FlowStep[] }
+export interface CompareSide { sql: string; setup?: string; label?: string }
+
+export interface Failure {
+  id: string;
+  title: string;
+  kind: 'error' | 'hang' | 'slow' | 'wrong';
+  origin: string;
+  path: string[];
+  knock?: [string, string][];
+  tell: string;
+  sees: string;
+  cause: string;
+  fix: string;
+  patterns?: string[];
+  messages?: Record<string, string>;
+  demo?: { dataset: string; sql: string };
+  compare?: { dataset: string; slow: CompareSide; fast: CompareSide };
+}
+
+export interface Symptom { id: string; title: string; failures: string[] }
+export interface QueryPreset { id: string; title: string; dataset: string; sql: string }
+
+export interface ExploreData {
+  stations: Station[];
+  edges: MapEdge[];
+  flows: Flow[];
+  failures: Failure[];
+  symptoms: Symptom[];
+  queries: QueryPreset[];
+  presets: {
+    journey: string;
+    processing: [string, string, number][];
+    playground: Record<string, string>;
+    join_lab: { players: string; teams: string; sql: Record<string, string>; notes: Record<string, string> };
+    index_lab: { title: string; table: string; columns: string[]; sql: string }[];
+  };
+}
+
+export interface DepNode {
+  id: string;
+  kind: 'table' | 'cte' | 'subquery' | 'function' | 'missing' | 'query';
+  label: string;
+  rows?: number | null;
+  work?: number | null;
+  sql?: string;
+  role?: string;
+  correlated?: boolean;
+  recursive?: boolean;
+  status: 'ok' | 'error' | 'blocked' | 'failed';
+  error?: EngineError;
+  message?: string;
+  blocked_by?: string[];
+}
+
+export interface DepEdge { from: string; to: string; kind: string; broken?: boolean }
+
+export interface Dependencies {
+  supported: boolean;
+  reason?: string;
+  statement?: string;
+  nodes?: DepNode[];
+  edges?: DepEdge[];
+}
+
+export interface VisualizeResponse {
+  engine: string;
+  dataset: string;
+  statement: string;
+  dependencies: Dependencies;
+  steps: StepsResponse;
+  plan: ExplainResponse;
 }

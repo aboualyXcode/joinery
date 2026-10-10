@@ -6,7 +6,7 @@ import { highlightHTML } from '../lib/sql.ts';
 import type { Stage, StepsResponse } from '../types.ts';
 import { renderError, renderTable } from './results.ts';
 
-function stageView(stage: Stage, index: number, total: number): HTMLElement {
+export function renderStageDetail(stage: Stage, index: number, total: number): HTMLElement {
   const counted = stage.kept_count !== null && stage.input_count !== null;
   const count = counted
     ? `${formatNumber(stage.kept_count ?? 0)} of ${formatNumber(stage.input_count ?? 0)} kept`
@@ -50,7 +50,7 @@ export function renderSteps(steps: StepsResponse): HTMLElement {
     });
     panel.setAttribute('aria-labelledby', `${id}-${index}`);
     const stage = stages[index];
-    if (stage) panel.replaceChildren(stageView(stage, index, stages.length));
+    if (stage) panel.replaceChildren(renderStageDetail(stage, index, stages.length));
     if (focus) tabs[index]?.focus();
   }
 

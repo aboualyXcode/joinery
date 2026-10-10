@@ -61,6 +61,7 @@ sections:
           ORDER BY gross DESC;
         portable: true
   - title: Logical and physical plans
+    widget: {type: query-map, preset: country-orders}
     body: |
       A **logical plan** describes *what* to compute in relational terms: scan, filter, join, aggregate.
       A **physical plan** describes *how*: a full scan or an index search, a nested-loop or hash join, a

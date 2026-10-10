@@ -46,7 +46,14 @@ class CurriculumTests(unittest.TestCase):
         widgets = {section["widget"]["type"] for lesson in self.content.lessons.values()
                    for section in lesson["sections"] if section["widget"]}
         self.assertEqual(widgets, {"join-visualizer", "isolation-simulator", "index-lab", "query-journey",
-                                   "processing-order", "erd"})
+                                   "processing-order", "engine-map", "failure-map", "query-map", "relationships"})
+        presets = {q["id"] for q in Platform(Settings(data_dir=ROOT / "var" / "datasets", content_dir=ROOT / "content",
+                                                     engines=("sqlite",))).explore["queries"]}
+        for lesson in self.content.lessons.values():
+            for section in lesson["sections"]:
+                widget = section["widget"] or {}
+                if widget.get("type") == "query-map":
+                    self.assertIn(widget["preset"], presets, lesson["id"])
 
 
 if __name__ == "__main__":

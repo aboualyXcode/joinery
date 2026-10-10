@@ -7,6 +7,7 @@ import time
 
 from .config import Settings
 from .content import load_content
+from .content.explore import load_explore
 from .content.loader import Exercise
 from .datasets import dataset_ids, get_dataset
 from .datasets.build import ensure_built
@@ -14,6 +15,7 @@ from .datasets.ddl import DIALECTS, create_script
 from .engines import Engine, build_engines
 from .grading import compare
 from .sandbox import SandboxRunner
+from .sqltools.dependencies import dependency_graph, propagate, to_json
 from .sqltools.errors import explain_error
 from .sqltools.lint import lint
 from .sqltools.plans import aliases_for, annotate_bytecode, postgres_tree, sqlite_tree
@@ -44,6 +46,8 @@ class Platform:
         if "sqlite" not in self.engines:
             raise RuntimeError("the SQLite engine must be enabled: exercises are graded on it")
         self.content = load_content(settings.content_dir)
+        explore_file = settings.content_dir / "explore.yaml"
+        self.explore = load_explore(explore_file, set(dataset_ids())) if explore_file.exists() else {}
         self.schemas, self.checks, self.row_counts = {}, {}, {}
         for dataset_id in dataset_ids():
             dataset = get_dataset(dataset_id)
@@ -184,6 +188,47 @@ class Platform:
         if result.get("error"):
             result["error"] = self._explain(result["error"], sql, dataset_id)
         return result
+
+    def visualize(self, sql: str, dataset_id: str, engine_id: str | None = None) -> dict:
+        """Everything the query map draws: dependencies with row counts and
+        failure propagation, the logical stages and the physical plan."""
+        engine, dataset_id = self.engine(engine_id), self.dataset(dataset_id)
+        statements = statement_texts(sql, engine.dialect)
+        if len(statements) != 1:
+            raise ServiceError("Visualize one statement at a time.")
+        statement = statements[0]
+        graph = dependency_graph(statement, self.schemas[dataset_id], self.row_counts[dataset_id], engine.dialect)
+        dependencies: dict
+        if isinstance(graph, dict):
+            dependencies = graph
+        else:
+            batches = []
+            for node_id in graph.nodes:
+                query = graph.count_query(node_id)
+                if query:
+                    batches.append({"id": node_id, "sql": query, "split": False})
+            if graph.statement == "select":
+                batches.append({"id": "query", "sql": f"SELECT count(*) FROM ({graph.sql})", "split": False})
+            out = self._execute(engine, dataset_id, batches) if batches else {"ok": True, "batches": []}
+            for batch in out.get("batches", []):
+                node = graph.nodes.get(batch["id"])
+                result = batch["statements"][0] if batch["statements"] else None
+                if node is None or result is None:
+                    continue
+                if result.get("error"):
+                    node["status"] = "failed"
+                    node["error"] = self._explain(result["error"], statement, dataset_id)
+                elif result["rows"]:
+                    node["rows"] = result["rows"][0][0]
+                    node["work"] = result.get("vm_steps")
+            propagate(graph)
+            dependencies = to_json(graph)
+        try:
+            plan = self.explain(statement, dataset_id, engine_id)
+        except ServiceError as exc:
+            plan = {"error": {"type": "RequestError", "message": exc.message, "explanation": None}}
+        return {"engine": engine.id, "dataset": dataset_id, "statement": statement, "dependencies": dependencies,
+                "steps": self.steps(statement, dataset_id, engine_id), "plan": plan}
 
     # ------------------------------------------------------------------ exercises
     def exercise(self, exercise_id: str) -> Exercise:

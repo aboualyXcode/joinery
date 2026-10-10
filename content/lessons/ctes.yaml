@@ -28,6 +28,7 @@ sections:
         portable: true
         mode: steps
   - title: Chaining CTEs into a pipeline
+    widget: {type: query-map, preset: spend-tiers}
     body: |
       Later CTEs can read earlier ones. This turns a complicated report into small steps you can test
       one at a time: change the final `SELECT` to `SELECT * FROM customer_spend` to inspect a step.
