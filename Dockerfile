@@ -11,7 +11,7 @@ COPY web ./web
 RUN npm run typecheck && npm run build
 
 # ---------------------------------------------------------------- runtime
-FROM python:3.13-slim AS runtime
+FROM python:3.15-slim AS runtime
 ARG WITH_ENGINES=0
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
